@@ -326,6 +326,32 @@ public:
   Q_INVOKABLE void removeTag(const QString& name, const QStringList& paths);
   void reconcileTags(const QList<CaptureRecord>& records);
 
+  // For the chips under a file and the Organize checks.
+  //
+  // The albums holding one file, sorted.
+  Q_INVOKABLE [[nodiscard]] QStringList albumsForPath(const QString& path) const;
+  // The tags shown on one file, in tagsForPath order, each {name, fromFile}.
+  // fromFile is set when only the file's own keywords put the tag there.
+  Q_INVOKABLE [[nodiscard]] QVariantList tagSources(const QString& path) const;
+  // Up to |limit| tag names that match |text| at the start of a word,
+  // ignoring case and accents, best first: the whole name, then its last
+  // level, then any word. Names in |exclude| are left out.
+  Q_INVOKABLE [[nodiscard]] QStringList matchTags(const QString& text, const QStringList& exclude = {},
+                                                  int limit = 8) const;
+  // Every album, then every tag, with how many of |paths| hold it directly:
+  // {kind: "album" or "tag", name, count, fromFile}. fromFile marks a tag
+  // that exists only as keywords in files.
+  Q_INVOKABLE [[nodiscard]] QVariantList organizationFor(const QStringList& paths) const;
+  // Adds |paths| to the tag or album with this name, ignoring case, creating
+  // it first when there is none. One undo step either way. Returns
+  // {name, count, created}: the name used (empty when it is unusable), how
+  // many files gained it, and whether it is new. With |mustBeNew| an
+  // existing name changes nothing and returns an empty name.
+  Q_INVOKABLE QVariantMap createTagFor(const QString& name, const QStringList& paths,
+                                       bool mustBeNew = false);
+  Q_INVOKABLE QVariantMap createAlbumFor(const QString& name, const QStringList& paths,
+                                         bool mustBeNew = false);
+
   [[nodiscard]] bool readEmbeddedMetadata() const { return m_readEmbedded; }
   void setReadEmbeddedMetadata(bool value);
   // What one file and its sidecar hold, and the file's identity when it was
@@ -413,14 +439,16 @@ public:
   Q_INVOKABLE void toggleHidden(const QString& path);
 
   // One ordered undo history for the destructive actions: favourites, hidden
-  // files, ratings and captions, and moves to Trash. One step per action
-  // (a whole batch is one step), capped. undo() takes back the newest step and
-  // returns what to tell the user.
+  // files, ratings and captions, albums and tags, and moves to Trash. One
+  // step per action (a whole batch is one step), capped. undo() takes back
+  // the newest step and returns what to tell the user.
   Q_INVOKABLE [[nodiscard]] bool canUndo() const { return !m_undoStack.isEmpty(); }
   [[nodiscard]] int latestUndoId() const {
     return m_undoStack.isEmpty() ? 0 : m_undoStack.constLast().id;
   }
   Q_INVOKABLE QString undo();
+  // Forgets every undo step. For tests that share one profile.
+  void clearUndoHistory();
   // Records files just moved to Trash as one step, from the records
   // ActionLauncher::trashCaptured returns. |origin| is the viewer session the
   // files left, if any; each record may carry the index it had there. Returns
@@ -669,15 +697,52 @@ private:
     QHash<QString, AlbumEntry> identities;
     QMap<QString, QList<AlbumEntry>> clearedEmbedded;
   };
+  // Albums, tags, hidden keywords and saved views before an album or tag
+  // change. Implicitly shared copies, so a step costs little until the
+  // organization changes under it.
+  struct OrganizationSnapshot {
+    QMap<QString, QList<AlbumEntry>> albums;
+    QMap<QString, QList<AlbumEntry>> tags;
+    QMap<QString, QList<AlbumEntry>> removedEmbeddedTags;
+    QMap<QString, QVariantMap> smartCollections;
+    // The saved views this step changed (a rename or delete that took a
+    // view with it). Only these are put back, so undoing a step never
+    // touches a view saved or deleted after it.
+    QStringList changedViews;
+    // Those views as the step left them; one missing here was removed by
+    // it. A view edited, saved again or deleted since no longer matches
+    // and is left as it is.
+    QMap<QString, QVariantMap> viewsAfter;
+  };
   struct UndoStep {
     int id = 0;
-    // A marks step restores this snapshot; a Trash step restores its records.
+    // A marks step restores this snapshot; an organization step restores
+    // its own; a Trash step restores its records.
     MarksSnapshot marks;
+    bool isOrganization = false;
+    OrganizationSnapshot organization;
+    // What undoing an organization step says, such as "Put back tag Travel
+    // on 8 items".
+    QString message;
     QVariantList trashed;
     QPointer<QObject> origin;
     [[nodiscard]] bool isTrash() const { return !trashed.isEmpty(); }
   };
   void pushUndoStep(UndoStep step);
+  [[nodiscard]] OrganizationSnapshot organizationSnapshot() const;
+  // Records one album or tag change, from the state before it. Inside a
+  // group (createTagFor, createAlbumFor) only the group's first state and
+  // its own message are kept, so the group is one step.
+  void pushOrganizationUndo(OrganizationSnapshot before, const QString& message);
+  void restoreOrganization(OrganizationSnapshot snapshot);
+  int m_undoGroup = 0;
+  bool m_groupChanged = false;
+  OrganizationSnapshot m_groupBefore;
+  // The tag ops, counting the files each one changed.
+  int addTagPaths(const QString& name, const QStringList& paths);
+  int removeTagPaths(const QString& name, const QStringList& paths);
+  int addToAlbumPaths(const QString& name, const QStringList& paths);
+  int removeFromAlbumPaths(const QString& name, const QStringList& paths);
   QList<UndoStep> m_undoStack;
   int m_nextUndoId = 1;
   bool m_undoing = false;

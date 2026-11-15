@@ -260,6 +260,8 @@ set(OMAROLL_QML_FILES
   qml/components/FolderSidebar.qml
   qml/components/AlbumActionMenu.qml
   qml/components/AlbumNameSheet.qml
+  qml/components/OrganizationChips.qml
+  qml/components/TagField.qml
   qml/components/ExportSheet.qml
   qml/components/RenameSheet.qml
   qml/components/TailscaleSheet.qml

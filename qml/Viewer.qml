@@ -2832,6 +2832,7 @@ ApplicationWindow {
     ViewerInfoPanel {
         id: infoPanel
         objectName: "viewerInfoPanel"
+        blockingActionOpen: root.blockingActionOpen
         anchors.top: parent.top
         anchors.right: parent.right
         anchors.topMargin: 58

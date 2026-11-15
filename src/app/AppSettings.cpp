@@ -1044,16 +1044,20 @@ bool AppSettings::createAlbum(const QString& name) {
       return false;
     }
   }
+  OrganizationSnapshot before = organizationSnapshot();
   m_albums.insert(normalized, {});
   persistAlbums();
+  pushOrganizationUndo(std::move(before), QStringLiteral("Removed new album %1").arg(normalized));
   emit albumsChanged();
   return m_organizationError.isEmpty();
 }
 
 int AppSettings::deleteAlbum(const QString& name) {
-  if (m_albums.remove(name) == 0) {
+  if (!m_albums.contains(name)) {
     return 0;
   }
+  OrganizationSnapshot before = organizationSnapshot();
+  m_albums.remove(name);
   const int views = removeViewsNaming(QStringLiteral("album"),
                                       [&name](const QString& album) { return album == name; });
   // One sync for both, so a saved view never outlives its album on disk.
@@ -1065,6 +1069,7 @@ int AppSettings::deleteAlbum(const QString& name) {
   }
   m_deferOrganizationSync = false;
   syncOrganization();
+  pushOrganizationUndo(std::move(before), QStringLiteral("Put back album %1").arg(name));
   emit albumsChanged();
   return views;
 }
@@ -1089,6 +1094,10 @@ bool AppSettings::renameAlbum(const QString& oldName, const QString& newName) {
       }
     }
   }
+  if (target == oldName) {
+    return m_organizationError.isEmpty();
+  }
+  OrganizationSnapshot before = organizationSnapshot();
   // Membership moves with the name; nothing is re-resolved, so a rename cannot
   // lose an entry the way a delete-and-recreate would.
   m_albums.insert(target, m_albums.take(oldName));
@@ -1108,16 +1117,31 @@ bool AppSettings::renameAlbum(const QString& oldName, const QString& newName) {
   }
   m_deferOrganizationSync = false;
   syncOrganization();
+  pushOrganizationUndo(std::move(before), QStringLiteral("Renamed album %1 back to %2").arg(target, oldName));
   emit albumsChanged();
   return m_organizationError.isEmpty();
 }
 
+namespace {
+QString items(int count) {
+  return count == 1 ? QStringLiteral("1 item") : QStringLiteral("%1 items").arg(count);
+}
+} // namespace
+
 bool AppSettings::addToAlbum(const QString& name, const QStringList& paths) {
-  auto it = m_albums.find(name);
-  if (it == m_albums.end()) {
-    return false;
+  return addToAlbumPaths(name, paths) > 0 && m_organizationError.isEmpty();
+}
+
+int AppSettings::addToAlbumPaths(const QString& name, const QStringList& paths) {
+  if (!m_albums.contains(name)) {
+    return 0;
   }
-  bool changed = false;
+  // Changed on a copy and stored only when something changed, so the
+  // snapshot keeps sharing the map otherwise.
+  OrganizationSnapshot before = organizationSnapshot();
+  QList<AlbumEntry> members = std::as_const(m_albums).value(name);
+  auto* it = &members;
+  int changed = 0;
   for (const QString& path : paths) {
     // An entry already here for this path stands, unless its file is gone:
     // then a new file at the same name is a new member and takes its place.
@@ -1145,47 +1169,63 @@ bool AppSettings::addToAlbum(const QString& name, const QStringList& paths) {
     } else {
       it->append(std::move(entry));
     }
-    changed = true;
+    ++changed;
   }
-  if (changed) {
+  if (changed > 0) {
+    m_albums.insert(name, members);
     persistAlbums();
+    pushOrganizationUndo(std::move(before), QStringLiteral("Took %1 out of %2").arg(items(changed), name));
     emit albumsChanged();
   }
-  return changed && m_organizationError.isEmpty();
+  return changed;
 }
 
 void AppSettings::removeFromAlbum(const QString& name, const QStringList& paths) {
-  auto it = m_albums.find(name);
-  if (it == m_albums.end()) {
-    return;
+  removeFromAlbumPaths(name, paths);
+}
+
+int AppSettings::removeFromAlbumPaths(const QString& name, const QStringList& paths) {
+  if (!m_albums.contains(name)) {
+    return 0;
   }
-  bool changed = false;
+  OrganizationSnapshot before = organizationSnapshot();
+  QList<AlbumEntry> members = std::as_const(m_albums).value(name);
+  auto* it = &members;
+  const QSet<QString> wanted(paths.cbegin(), paths.cend());
+  int changed = 0;
   for (qsizetype index = it->size() - 1; index >= 0; --index) {
-    if (paths.contains(it->at(index).path)) {
+    if (wanted.contains(it->at(index).path)) {
       it->removeAt(index);
-      changed = true;
+      ++changed;
     }
   }
-  if (changed) {
+  if (changed > 0) {
+    m_albums.insert(name, members);
     persistAlbums();
+    pushOrganizationUndo(std::move(before), QStringLiteral("Put %1 back in %2").arg(items(changed), name));
     emit albumsChanged();
   }
+  return changed;
 }
 
 void AppSettings::removeUnavailableFromAlbum(const QString& name) {
-  auto it = m_albums.find(name);
-  if (it == m_albums.end()) {
+  if (!m_albums.contains(name)) {
     return;
   }
-  bool changed = false;
+  OrganizationSnapshot before = organizationSnapshot();
+  QList<AlbumEntry> members = std::as_const(m_albums).value(name);
+  auto* it = &members;
+  int changed = 0;
   for (qsizetype index = it->size() - 1; index >= 0; --index) {
     if (!it->at(index).resolved) {
       it->removeAt(index);
-      changed = true;
+      ++changed;
     }
   }
-  if (changed) {
+  if (changed > 0) {
+    m_albums.insert(name, members);
     persistAlbums();
+    pushOrganizationUndo(std::move(before), QStringLiteral("Put %1 back in %2").arg(items(changed), name));
     emit albumsChanged();
   }
 }
@@ -1353,6 +1393,7 @@ bool AppSettings::createTag(const QString& name) {
       return false;
     }
   }
+  OrganizationSnapshot before = organizationSnapshot();
   // Every ancestor exists too, so the tree in Browse has no gaps and a
   // parent can be chosen to see everything under it. A name that exists so
   // far only as a keyword from files gets its local key here.
@@ -1371,6 +1412,7 @@ bool AppSettings::createTag(const QString& name) {
     }
   }
   persistTags();
+  pushOrganizationUndo(std::move(before), QStringLiteral("Removed new tag %1").arg(normalized));
   emit tagsChanged();
   return m_organizationError.isEmpty();
 }
@@ -1537,21 +1579,29 @@ bool AppSettings::addRows(QMap<QString, QList<AlbumEntry>>& rows, const QString&
     for (const AlbumEntry& entry : it.value())
       if (entry.resolved) present.insert(entry.path);
   }
-  bool changed = false;
-  QList<AlbumEntry>& target = rows[key];
+  QList<AlbumEntry> fresh;
   for (const AlbumEntry& entry : added) {
     if (entry.path.isEmpty() || present.contains(entry.path)) continue;
     present.insert(entry.path);
-    target.append(entry);
-    changed = true;
+    fresh.append(entry);
   }
-  if (target.isEmpty()) rows.remove(key);
-  return changed;
+  // Untouched when there is nothing new, so undo snapshots keep sharing it.
+  if (fresh.isEmpty()) return false;
+  rows[key].append(fresh);
+  return true;
 }
 
 bool AppSettings::dropRows(QMap<QString, QList<AlbumEntry>>& rows, const QString& name,
                            const QString& path) {
   const QString folded = TagNames::folded(name);
+  // Read first: walking |rows| for writing would copy it away from the undo
+  // snapshots that share it, even when there is nothing to drop.
+  bool present = false;
+  for (auto it = std::as_const(rows).cbegin(); it != std::as_const(rows).cend() && !present; ++it) {
+    present = TagNames::folded(it.key()) == folded &&
+              std::any_of(it->cbegin(), it->cend(), [&path](const AlbumEntry& entry) { return entry.path == path; });
+  }
+  if (!present) return false;
   bool changed = false;
   for (auto it = rows.begin(); it != rows.end();) {
     if (TagNames::folded(it.key()) == folded &&
@@ -1564,6 +1614,7 @@ bool AppSettings::dropRows(QMap<QString, QList<AlbumEntry>>& rows, const QString
 }
 
 int AppSettings::deleteTag(const QString& name) {
+  OrganizationSnapshot before = organizationSnapshot();
   int removed = m_tags.remove(name);
   for (const QString& existing : m_tags.keys()) {
     if (tagIsUnder(existing, name)) {
@@ -1597,6 +1648,7 @@ int AppSettings::deleteTag(const QString& name) {
     for (const QString& path : carriers) indexEmbedded(path);
     scheduleFingerprints();
   }
+  pushOrganizationUndo(std::move(before), QStringLiteral("Put back tag %1").arg(name));
   emit tagsChanged();
   return views;
 }
@@ -1655,6 +1707,7 @@ bool AppSettings::renameTag(const QString& oldName, const QString& newName) {
     }
   }
 
+  OrganizationSnapshot before = organizationSnapshot();
   QMap<QString, QList<AlbumEntry>> moved;
   for (const auto& move : moves) {
     moved.insert(move.second, m_tags.take(move.first));
@@ -1712,25 +1765,36 @@ bool AppSettings::renameTag(const QString& oldName, const QString& newName) {
     for (const QString& path : carriers) indexEmbedded(path);
   }
   if (!carriers.isEmpty()) scheduleFingerprints();
+  pushOrganizationUndo(std::move(before), QStringLiteral("Renamed tag %1 back to %2").arg(target, oldName));
   emit tagsChanged();
   return m_organizationError.isEmpty();
 }
 
 bool AppSettings::addTag(const QString& name, const QStringList& paths) {
-  auto it = m_tags.find(name);
+  return addTagPaths(name, paths) > 0 && m_organizationError.isEmpty();
+}
+
+int AppSettings::addTagPaths(const QString& name, const QStringList& paths) {
+  OrganizationSnapshot before = organizationSnapshot();
+  QString key = name;
   bool created = false;
-  if (it == m_tags.end()) {
+  if (!m_tags.contains(name)) {
     // A tag that exists so far only as a keyword from files gets its local
     // key first.
-    if (!tagNames().contains(name)) return false;
-    it = m_tags.find(ensureTagKeys(name));
+    if (!tagNames().contains(name)) return 0;
+    key = ensureTagKeys(name);
     created = true;
   }
+  // Changed on a copy, stored only when something changed.
+  QList<AlbumEntry> members = std::as_const(m_tags).value(key);
+  auto* it = &members;
   bool changed = false;
   bool shown = false;
+  int count = 0;
   for (const QString& path : paths) {
     // Adding a tag again undoes hiding it on that file.
-    shown = dropRows(m_removedEmbeddedTags, name, path) || shown;
+    const bool showing = dropRows(m_removedEmbeddedTags, name, path);
+    shown = showing || shown;
     bool present = false;
     for (const AlbumEntry& entry : std::as_const(*it)) {
       if (entry.path == path && entry.resolved) {
@@ -1738,14 +1802,18 @@ bool AppSettings::addTag(const QString& name, const QStringList& paths) {
         break;
       }
     }
+    bool added = false;
     if (!present) {
       AlbumEntry entry = identityFor(path);
       if (entry.resolved) {
         it->append(std::move(entry));
         changed = true;
+        added = true;
       }
     }
+    if (added || showing) ++count;
   }
+  if (changed) m_tags.insert(key, members);
   if (changed || created || shown) {
     m_deferOrganizationSync = true;
     if (changed || created) persistTags();
@@ -1756,20 +1824,31 @@ bool AppSettings::addTag(const QString& name, const QStringList& paths) {
       rebuildRemovalIndex();
       for (const QString& path : paths) indexEmbedded(path);
     }
+    pushOrganizationUndo(std::move(before), QStringLiteral("Took tag %1 off %2").arg(name, items(count)));
     emit tagsChanged();
   }
-  return (changed || shown) && m_organizationError.isEmpty();
+  return count;
 }
 
 void AppSettings::removeTag(const QString& name, const QStringList& paths) {
+  removeTagPaths(name, paths);
+}
+
+int AppSettings::removeTagPaths(const QString& name, const QStringList& paths) {
+  OrganizationSnapshot before = organizationSnapshot();
+  const QSet<QString> wanted(paths.cbegin(), paths.cend());
   bool changed = false;
-  if (auto it = m_tags.find(name); it != m_tags.end()) {
-    for (qsizetype index = it->size() - 1; index >= 0; --index) {
-      if (paths.contains(it->at(index).path)) {
-        it->removeAt(index);
+  QSet<QString> affected;
+  if (m_tags.contains(name)) {
+    QList<AlbumEntry> members = std::as_const(m_tags).value(name);
+    for (qsizetype index = members.size() - 1; index >= 0; --index) {
+      if (wanted.contains(members.at(index).path)) {
+        affected.insert(members.at(index).path);
+        members.removeAt(index);
         changed = true;
       }
     }
+    if (changed) m_tags.insert(name, members);
   }
   // A file whose own keywords carry the tag, or one nested under it, keeps
   // it hidden here instead. Its file is not changed.
@@ -1779,10 +1858,11 @@ void AppSettings::removeTag(const QString& name, const QStringList& paths) {
     if (!embeddedKeywordsUnder(path, name).isEmpty()) {
       rows.append(rowFor(path));
       carriers.append(path);
+      affected.insert(path);
     }
   }
   const bool hidden = addRows(m_removedEmbeddedTags, name, rows);
-  if (!changed && !hidden) return;
+  if (!changed && !hidden) return 0;
   m_deferOrganizationSync = true;
   if (changed) persistTags();
   if (hidden) persistRemovals();
@@ -1795,7 +1875,203 @@ void AppSettings::removeTag(const QString& name, const QStringList& paths) {
     }
     scheduleFingerprints();
   }
+  const int count = static_cast<int>(affected.size());
+  pushOrganizationUndo(std::move(before), QStringLiteral("Put back tag %1 on %2").arg(name, items(count)));
   emit tagsChanged();
+  return count;
+}
+
+QStringList AppSettings::albumsForPath(const QString& path) const {
+  QStringList names;
+  if (path.isEmpty()) return names;
+  for (auto it = m_albums.cbegin(); it != m_albums.cend(); ++it) {
+    for (const AlbumEntry& entry : it.value()) {
+      if (entry.resolved && entry.path == path) {
+        names.append(it.key());
+        break;
+      }
+    }
+  }
+  names.sort(Qt::CaseInsensitive);
+  return names;
+}
+
+QVariantList AppSettings::tagSources(const QString& path) const {
+  QVariantList rows;
+  if (path.isEmpty()) return rows;
+  QSet<QString> local;
+  for (auto it = m_tags.cbegin(); it != m_tags.cend(); ++it) {
+    for (const AlbumEntry& entry : it.value()) {
+      if (entry.resolved && entry.path == path) {
+        local.insert(it.key());
+        break;
+      }
+    }
+  }
+  for (const QString& name : tagsForPath(path)) {
+    rows.append(QVariantMap{{QStringLiteral("name"), name},
+                            {QStringLiteral("fromFile"), !local.contains(name)}});
+  }
+  return rows;
+}
+
+namespace {
+// Case and accents folded away, so "cafe" finds "Café".
+QString searchFolded(const QString& text) {
+  const QString decomposed = text.normalized(QString::NormalizationForm_KD);
+  QString out;
+  out.reserve(decomposed.size());
+  for (const QChar character : decomposed) {
+    if (character.category() != QChar::Mark_NonSpacing) out.append(character);
+  }
+  return out.toCaseFolded();
+}
+
+// 0 when |name| starts with |query|, 1 when its last level does, 2 when any
+// other word does, -1 for no match.
+int tagMatchRank(const QString& name, const QString& query) {
+  if (name.startsWith(query)) return 0;
+  const qsizetype leaf = name.lastIndexOf(QLatin1Char('/')) + 1;
+  if (leaf > 0 && QStringView(name).mid(leaf).startsWith(query)) return 1;
+  for (qsizetype at = name.indexOf(query, 1); at > 0; at = name.indexOf(query, at + 1)) {
+    if (!name.at(at - 1).isLetterOrNumber()) return 2;
+  }
+  return -1;
+}
+} // namespace
+
+QStringList AppSettings::matchTags(const QString& text, const QStringList& exclude, int limit) const {
+  const QString query = searchFolded(text.simplified());
+  if (query.isEmpty() || limit <= 0) return {};
+  QSet<QString> skipped;
+  for (const QString& name : exclude) skipped.insert(TagNames::folded(name));
+  struct Match {
+    int rank;
+    QString name;
+  };
+  QList<Match> matches;
+  for (const QString& name : tagNames()) {
+    if (skipped.contains(TagNames::folded(name))) continue;
+    const int rank = tagMatchRank(searchFolded(name), query);
+    if (rank >= 0) matches.append({rank, name});
+  }
+  // tagNames is in tree order already; a stable sort keeps that within a rank.
+  std::stable_sort(matches.begin(), matches.end(),
+                   [](const Match& a, const Match& b) { return a.rank < b.rank; });
+  QStringList names;
+  for (const Match& match : std::as_const(matches)) {
+    if (names.size() >= limit) break;
+    names.append(match.name);
+  }
+  return names;
+}
+
+QVariantList AppSettings::organizationFor(const QStringList& paths) const {
+  const QSet<QString> wanted(paths.cbegin(), paths.cend());
+  QVariantList rows;
+  const auto row = [](const QString& kind, const QString& name, int count, bool fromFile) {
+    return QVariantMap{{QStringLiteral("kind"), kind},
+                       {QStringLiteral("name"), name},
+                       {QStringLiteral("count"), count},
+                       {QStringLiteral("fromFile"), fromFile}};
+  };
+  const auto held = [&wanted](const QList<AlbumEntry>& entries) {
+    QSet<QString> found;
+    for (const AlbumEntry& entry : entries) {
+      if (entry.resolved && wanted.contains(entry.path)) found.insert(entry.path);
+    }
+    return found;
+  };
+  for (const QString& name : albumNames()) {
+    rows.append(row(QStringLiteral("album"), name, static_cast<int>(held(m_albums.value(name)).size()), false));
+  }
+  // Each selected file's keywords, under the name tagNames shows them by.
+  QHash<QString, QSet<QString>> fromFiles;
+  if (!m_embeddedEffective.isEmpty() || !m_transientEmbedded.isEmpty()) {
+    const QHash<QString, QString> local = localTagsByFold();
+    for (const QString& path : wanted) {
+      for (const QString& keyword : visibleKeywords(path)) {
+        fromFiles[TagNames::folded(displayTag(keyword, local))].insert(path);
+      }
+    }
+  }
+  for (const QString& name : tagNames()) {
+    QSet<QString> carriers = held(m_tags.value(name));
+    carriers.unite(fromFiles.value(TagNames::folded(name)));
+    rows.append(row(QStringLiteral("tag"), name, static_cast<int>(carriers.size()), !m_tags.contains(name)));
+  }
+  return rows;
+}
+
+QVariantMap AppSettings::createTagFor(const QString& name, const QStringList& paths, bool mustBeNew) {
+  QVariantMap result{{QStringLiteral("name"), QString()},
+                     {QStringLiteral("count"), 0},
+                     {QStringLiteral("created"), false}};
+  const QString normalized = normalizedTagName(name);
+  if (normalized.isEmpty()) return result;
+  QString existing;
+  // A new tag may take a name that so far only files carry, as createTag
+  // allows.
+  for (const QString& tag : mustBeNew ? QStringList() : tagNames()) {
+    if (tag.compare(normalized, Qt::CaseInsensitive) == 0) {
+      existing = tag;
+      break;
+    }
+  }
+  if (!existing.isEmpty()) {
+    result.insert(QStringLiteral("name"), existing);
+    result.insert(QStringLiteral("count"), addTagPaths(existing, paths));
+    return result;
+  }
+  // Created and added as one step.
+  ++m_undoGroup;
+  m_groupChanged = false;
+  m_groupBefore = organizationSnapshot();
+  const bool created = createTag(normalized);
+  const int count = created ? addTagPaths(normalized, paths) : 0;
+  --m_undoGroup;
+  // Always let go of the snapshot, so a refused create does not hold it.
+  OrganizationSnapshot groupBefore = std::exchange(m_groupBefore, {});
+  if (m_groupChanged) {
+    pushOrganizationUndo(std::move(groupBefore), QStringLiteral("Removed new tag %1").arg(normalized));
+  }
+  if (!created) return result;
+  result.insert(QStringLiteral("name"), normalized);
+  result.insert(QStringLiteral("count"), count);
+  result.insert(QStringLiteral("created"), true);
+  return result;
+}
+
+QVariantMap AppSettings::createAlbumFor(const QString& name, const QStringList& paths, bool mustBeNew) {
+  QVariantMap result{{QStringLiteral("name"), QString()},
+                     {QStringLiteral("count"), 0},
+                     {QStringLiteral("created"), false}};
+  const QString normalized = normalizedAlbumName(name);
+  if (normalized.isEmpty()) return result;
+  for (const QString& album : m_albums.keys()) {
+    if (album.compare(normalized, Qt::CaseInsensitive) == 0) {
+      if (mustBeNew) return result;
+      result.insert(QStringLiteral("name"), album);
+      result.insert(QStringLiteral("count"), addToAlbumPaths(album, paths));
+      return result;
+    }
+  }
+  ++m_undoGroup;
+  m_groupChanged = false;
+  m_groupBefore = organizationSnapshot();
+  const bool created = createAlbum(normalized);
+  const int count = created ? addToAlbumPaths(normalized, paths) : 0;
+  --m_undoGroup;
+  // Always let go of the snapshot, so a refused create does not hold it.
+  OrganizationSnapshot groupBefore = std::exchange(m_groupBefore, {});
+  if (m_groupChanged) {
+    pushOrganizationUndo(std::move(groupBefore), QStringLiteral("Removed new album %1").arg(normalized));
+  }
+  if (!created) return result;
+  result.insert(QStringLiteral("name"), normalized);
+  result.insert(QStringLiteral("count"), count);
+  result.insert(QStringLiteral("created"), true);
+  return result;
 }
 
 QStringList AppSettings::smartCollectionNames() const {
@@ -1872,8 +2148,10 @@ QList<bool> AppSettings::reconcileCollectionMaps(const QList<QMap<QString, QList
   for (qsizetype map = 0; map < maps.size(); ++map) {
   bool persistedChange = false;
   bool resolutionChange = false;
-  for (auto collection = maps.at(map)->begin(); collection != maps.at(map)->end(); ++collection) {
-    for (AlbumEntry& entry : collection.value()) {
+  // Each entry is worked out on a copy and written back only when it
+  // changed: walking the map for writing would copy it away from every undo
+  // snapshot that shares it, on every rescan.
+  const auto reconcile = [&](AlbumEntry& entry) {
       const bool wasResolved = entry.resolved;
       entry.resolved = false;
 
@@ -1888,7 +2166,7 @@ QList<bool> AppSettings::reconcileCollectionMaps(const QList<QMap<QString, QList
             entry.modified == scanned.modified) {
           entry.resolved = true;
           resolutionChange = resolutionChange || !wasResolved;
-          continue;
+          return;
         }
         const QFileInfo info(entry.path);
         struct stat status {};
@@ -1899,7 +2177,7 @@ QList<bool> AppSettings::reconcileCollectionMaps(const QList<QMap<QString, QList
             entry.modified == info.lastModified().toMSecsSinceEpoch()) {
           entry.resolved = true;
           resolutionChange = resolutionChange || !wasResolved;
-          continue;
+          return;
         }
         const AlbumEntry current = identityFor(entry.path);
         // Continuous same-path, same-device/inode edits keep membership.
@@ -1951,7 +2229,7 @@ QList<bool> AppSettings::reconcileCollectionMaps(const QList<QMap<QString, QList
         // stall the UI to repair one uncertain album entry.
         if (possible.size() > 128) {
           resolutionChange = resolutionChange || wasResolved;
-          continue;
+          return;
         }
         QString matchedPath;
         int matches = 0;
@@ -1974,8 +2252,23 @@ QList<bool> AppSettings::reconcileCollectionMaps(const QList<QMap<QString, QList
         }
       }
       resolutionChange = resolutionChange || wasResolved != entry.resolved;
+  };
+  struct Edit {
+    QString key;
+    qsizetype index;
+    AlbumEntry entry;
+  };
+  QList<Edit> edits;
+  const QMap<QString, QList<AlbumEntry>>& collections = *maps.at(map);
+  for (auto collection = collections.cbegin(); collection != collections.cend(); ++collection) {
+    const QList<AlbumEntry>& entries = collection.value();
+    for (qsizetype index = 0; index < entries.size(); ++index) {
+      AlbumEntry entry = entries.at(index);
+      reconcile(entry);
+      if (!(entry == entries.at(index))) edits.append({collection.key(), index, std::move(entry)});
     }
   }
+  for (const Edit& edit : std::as_const(edits)) (*maps.at(map))[edit.key][edit.index] = edit.entry;
   changed[map] = persistedChange || resolutionChange;
   }
   return changed;
@@ -1983,6 +2276,9 @@ QList<bool> AppSettings::reconcileCollectionMaps(const QList<QMap<QString, QList
 
 void AppSettings::reconcileAlbums(const QList<CaptureRecord>& records) {
   if (reconcileCollectionMap(m_albums, records)) {
+    // A repair the undo snapshots do not hold: undoing past it would put a
+    // moved file back at its old path. An unchanged scan keeps the history.
+    clearMarksUndo();
     persistAlbums();
     emit albumsChanged();
   }
@@ -1997,6 +2293,8 @@ void AppSettings::reconcileTags(const QList<CaptureRecord>& records) {
   // Rows written from a scanner identity, in this session or an earlier one.
   scheduleFingerprints();
   if (!changed.at(0) && !removals) return;
+  // As for albums: the snapshots would undo this repair.
+  clearMarksUndo();
   m_deferOrganizationSync = true;
   if (changed.at(0)) persistTags();
   if (removals) persistRemovals();
@@ -3339,6 +3637,91 @@ void AppSettings::pushMarksUndo() {
   pushUndoStep(std::move(step));
 }
 
+AppSettings::OrganizationSnapshot AppSettings::organizationSnapshot() const {
+  return {m_albums, m_tags, m_removedEmbeddedTags, m_smartCollections};
+}
+
+void AppSettings::pushOrganizationUndo(OrganizationSnapshot before, const QString& message) {
+  if (m_undoing) return;
+  if (m_undoGroup > 0) {
+    m_groupChanged = true;
+    return;
+  }
+  UndoStep step;
+  step.isOrganization = true;
+  step.organization = std::move(before);
+  // Which saved views this step changed, added or took away.
+  const QMap<QString, QVariantMap>& views = step.organization.smartCollections;
+  if (views != m_smartCollections) {
+    for (auto it = views.cbegin(); it != views.cend(); ++it) {
+      const auto now = m_smartCollections.constFind(it.key());
+      if (now == m_smartCollections.cend() || now.value() != it.value())
+        step.organization.changedViews.append(it.key());
+    }
+    for (auto it = m_smartCollections.cbegin(); it != m_smartCollections.cend(); ++it) {
+      if (!views.contains(it.key())) step.organization.changedViews.append(it.key());
+    }
+    for (const QString& name : std::as_const(step.organization.changedViews)) {
+      const auto now = m_smartCollections.constFind(name);
+      if (now != m_smartCollections.cend()) step.organization.viewsAfter.insert(name, now.value());
+    }
+  }
+  step.message = message;
+  pushUndoStep(std::move(step));
+}
+
+void AppSettings::clearUndoHistory() {
+  if (m_undoStack.isEmpty()) return;
+  m_undoStack.clear();
+  emit undoChanged();
+}
+
+void AppSettings::restoreOrganization(OrganizationSnapshot snapshot) {
+  const bool albums = m_albums != snapshot.albums;
+  const bool tags = m_tags != snapshot.tags;
+  const bool removals = m_removedEmbeddedTags != snapshot.removedEmbeddedTags;
+  // Only the views this step changed, and only while they are still as it
+  // left them: one saved, edited or deleted since stays.
+  bool views = false;
+  for (const QString& name : std::as_const(snapshot.changedViews)) {
+    const auto after = snapshot.viewsAfter.constFind(name);
+    const auto now = m_smartCollections.constFind(name);
+    const bool untouched = after == snapshot.viewsAfter.cend()
+                               ? now == m_smartCollections.cend()
+                               : now != m_smartCollections.cend() && now.value() == after.value();
+    if (!untouched) continue;
+    const auto before = snapshot.smartCollections.constFind(name);
+    if (before != snapshot.smartCollections.cend()) {
+      if (m_smartCollections.value(name) != before.value()) {
+        m_smartCollections.insert(name, before.value());
+        views = true;
+      }
+    } else if (m_smartCollections.remove(name) > 0) {
+      views = true;
+    }
+  }
+  m_albums = std::move(snapshot.albums);
+  m_tags = std::move(snapshot.tags);
+  m_removedEmbeddedTags = std::move(snapshot.removedEmbeddedTags);
+  m_deferOrganizationSync = true;
+  if (albums) persistAlbums();
+  if (tags) persistTags();
+  if (removals) persistRemovals();
+  if (views) persistSmartCollections();
+  m_deferOrganizationSync = false;
+  syncOrganization();
+  if (removals) {
+    rebuildRemovalIndex();
+    rebuildEmbeddedIndex();
+    // Rows put back keep a fingerprint the worker already read; any
+    // still missing one are filled again.
+    scheduleFingerprints();
+  }
+  if (albums) emit albumsChanged();
+  if (views) emit smartCollectionsChanged();
+  if (tags || removals) emit tagsChanged();
+}
+
 int AppSettings::pushTrashUndo(const QVariantList& records, QObject* origin) {
   UndoStep step;
   for (const QVariant& value : records) {
@@ -3401,6 +3784,13 @@ QString AppSettings::undo() {
     }
     return QStringLiteral("Restored %1 of %2 items. %3")
         .arg(restored.size()).arg(total).arg(problems.first());
+  }
+  if (step.isOrganization) {
+    m_undoing = true;
+    restoreOrganization(std::move(step.organization));
+    m_undoing = false;
+    emit undoChanged();
+    return step.message;
   }
   MarksSnapshot snapshot = std::move(step.marks);
   m_undoing = true;
@@ -3762,16 +4152,24 @@ void AppSettings::scheduleFingerprints() {
   bool removalsFilled = false;
   QList<AlbumEntry> batch;
   QSet<QString> queued;
+  // Read only: a write through these containers would detach them from
+  // every undo snapshot that shares them. Rows to fill are collected first
+  // and written after, so only maps that really change are copied.
+  struct Fill {
+    QString key;
+    qsizetype index;
+    QByteArray fingerprint;
+  };
   for (auto* rows : {&m_tags, &m_removedEmbeddedTags, &m_clearedEmbedded}) {
-    for (auto& entries : *rows) {
-      for (AlbumEntry& entry : entries) {
+    QList<Fill> fills;
+    for (auto it = std::as_const(*rows).cbegin(); it != std::as_const(*rows).cend(); ++it) {
+      const QList<AlbumEntry>& entries = it.value();
+      for (qsizetype index = 0; index < entries.size(); ++index) {
+        const AlbumEntry& entry = entries.at(index);
         if (!entry.fingerprint.isEmpty() || !entry.resolved || entry.bytes < 0) continue;
         const QString identity = fingerprintIdentity(entry);
         if (const auto known = m_fingerprints.constFind(identity); known != m_fingerprints.cend()) {
-          if (!known->isEmpty()) {
-            entry.fingerprint = *known;
-            (rows == &m_tags ? tagsFilled : removalsFilled) = true;
-          }
+          if (!known->isEmpty()) fills.append({it.key(), index, *known});
           continue;
         }
         if (running || batch.size() >= kFingerprintBatch || queued.contains(identity)) continue;
@@ -3779,6 +4177,8 @@ void AppSettings::scheduleFingerprints() {
         batch.append(entry);
       }
     }
+    for (const Fill& fill : std::as_const(fills)) (*rows)[fill.key][fill.index].fingerprint = fill.fingerprint;
+    if (!fills.isEmpty()) (rows == &m_tags ? tagsFilled : removalsFilled) = true;
   }
   if (tagsFilled || removalsFilled) {
     const bool deferred = m_deferOrganizationSync;

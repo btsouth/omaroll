@@ -4,6 +4,21 @@
 
 ### Added
 
+- A file's albums and tags show as chips under its caption in the preview and
+  in the viewer's details. Delete or Backspace on a chip removes it; a chip
+  from the file's own keywords has a file icon, and removing it hides it here
+  without changing the file.
+- A tag field under the chips: `Alt+T` reaches it, suggestions match the start
+  of any word ignoring case and accents, Tab takes a suggestion, Enter adds it
+  or creates a new tag, and a comma adds one and keeps typing.
+- Organize opens with a filter and a check for every album and tag, showing
+  whether all, some or none of the selection holds it. Space or a click adds
+  or removes the whole selection, and a name that matches nothing can be
+  created as an album or a tag.
+- Ctrl+Z undoes adding, removing, creating, renaming and deleting albums and
+  tags, saved views included, one step per action. The viewer's details have
+  their own status line with Undo.
+- Settings has a switch for reading keywords and ratings from files.
 - `Ctrl+Shift+O` opens a file with the desktop's file chooser, from the
   library, the preview or the viewer.
 

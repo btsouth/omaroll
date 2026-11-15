@@ -19,6 +19,8 @@ Rectangle {
     property bool favorite: false
     property var lines: []
     property bool loading: false
+    // A menu or sheet is open over the viewer; Alt+T waits for it.
+    property bool blockingActionOpen: false
     // "latitude, longitude" when the file says where it was taken.
     property string coordinates: ""
 
@@ -29,8 +31,46 @@ Rectangle {
     signal copyNameRequested()
     signal copyLocationRequested()
 
+    function undoStatus() {
+        if (root.statusUndoId <= 0 || Settings.latestUndoId !== root.statusUndoId) return
+        const message = Settings.undo()
+        root.say(message, 0)
+    }
+
     function shade(base, amount) {
         return Qt.rgba(base.r, base.g, base.b, amount)
+    }
+
+    // The panel's own status line: the viewer's toast is out of its reach.
+    property string status: ""
+    property int statusUndoId: 0
+    function say(message, undoId) {
+        root.status = message
+        root.statusUndoId = undoId
+        statusTimer.restart()
+    }
+    Timer {
+        id: statusTimer
+        interval: 8000
+        onTriggered: { root.status = ""; root.statusUndoId = 0 }
+    }
+    onFilePathChanged: { root.status = ""; root.statusUndoId = 0 }
+    // Undone elsewhere (Ctrl+Z): the line no longer says what is true.
+    Connections {
+        target: Settings
+        function onUndoChanged() {
+            if (root.statusUndoId > 0 && Settings.latestUndoId !== root.statusUndoId) {
+                root.status = ""
+                root.statusUndoId = 0
+            }
+        }
+    }
+
+    // Alt+T, while the details are shown.
+    Shortcut {
+        sequences: ShortcutCatalog.sequence("quick", "tag")
+        enabled: root.visible && !root.blockingActionOpen
+        onActivated: chips.focusTagField()
     }
 
     implicitWidth: 300
@@ -49,6 +89,31 @@ Rectangle {
     }
 
     Flickable {
+        id: infoScroll
+        objectName: "viewerInfoScroll"
+        // The focused control stays in view, also when chips above it wrap
+        // onto another line or the window is short (Alt+T reaches the tag
+        // field below the fold).
+        function revealFocusedControl() {
+            const window = root.Window.window
+            const focused = window ? window.activeFocusItem : null
+            let ancestor = focused
+            while (ancestor && ancestor !== content) ancestor = ancestor.parent
+            if (!focused || ancestor !== content) return
+            const top = focused.mapToItem(content, 0, 0).y
+            const bottom = top + focused.height
+            const maximum = Math.max(0, contentHeight - height)
+            if (top < contentY) contentY = Math.max(0, top)
+            else if (bottom > contentY + height) contentY = Math.min(maximum, bottom - height)
+        }
+        onContentHeightChanged: if (root.visible) Qt.callLater(infoScroll.revealFocusedControl)
+        onHeightChanged: if (root.visible) Qt.callLater(infoScroll.revealFocusedControl)
+        Connections {
+            target: root.Window.window
+            function onActiveFocusItemChanged() {
+                if (root.visible) Qt.callLater(infoScroll.revealFocusedControl)
+            }
+        }
         anchors.top: parent.top
         anchors.left: parent.left
         anchors.right: parent.right
@@ -137,6 +202,67 @@ Rectangle {
                     active: root.favorite
                     shortcut: "V"
                     onClicked: root.favoriteToggled()
+                }
+            }
+
+            OrganizationChips {
+                id: chips
+                objectName: "viewerInfoOrganization"
+                width: parent.width
+                osd: true
+                path: root.resolvedPath !== "" ? root.resolvedPath : root.filePath
+                onStatusRequested: function (message, undoId) { root.say(message, undoId) }
+            }
+
+            Row {
+                objectName: "viewerInfoStatus"
+                width: parent.width
+                spacing: 10
+                visible: root.status !== ""
+
+                Text {
+                    width: parent.width - (undoLink.visible ? undoLink.width + parent.spacing : 0)
+                    text: root.status
+                    wrapMode: Text.Wrap
+                    font.family: Theme.fontFamily
+                    font.pixelSize: 11
+                    color: Osd.mutedText
+                    Accessible.role: Accessible.AlertMessage
+                    Accessible.name: root.status
+                }
+                Text {
+                    id: undoLink
+                    objectName: "viewerInfoUndo"
+                    // Only while that change is still the newest one.
+                    visible: root.statusUndoId > 0 && Settings.latestUndoId === root.statusUndoId
+                    text: "Undo"
+                    font.family: Theme.fontFamily
+                    font.pixelSize: 11
+                    font.underline: true
+                    color: Osd.accent
+                    activeFocusOnTab: visible
+                    Accessible.role: Accessible.Button
+                    Accessible.name: "Undo"
+                    Accessible.onPressAction: root.undoStatus()
+                    Keys.onReturnPressed: root.undoStatus()
+                    Keys.onEnterPressed: root.undoStatus()
+                    Keys.onSpacePressed: root.undoStatus()
+
+                    Rectangle {
+                        anchors.fill: parent
+                        anchors.margins: -2
+                        visible: parent.activeFocus
+                        color: "transparent"
+                        radius: 2
+                        border.width: 1
+                        border.color: Osd.accent
+                    }
+                    MouseArea {
+                        anchors.fill: parent
+                        anchors.margins: -4
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: root.undoStatus()
+                    }
                 }
             }
 

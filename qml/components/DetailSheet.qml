@@ -242,6 +242,8 @@ Item {
     // The status line lives on the window, not here; asking for a message
     // through a signal keeps that binding intact.
     signal statusRequested(string message)
+    // The same for a change the footer can offer to undo.
+    signal undoableStatusRequested(string message, int undoId)
 
     function shade(base, amount) {
         return Qt.rgba(base.r, base.g, base.b, amount)
@@ -746,6 +748,10 @@ Item {
     }
 
     function dismissTransient() {
+        if (organizationChips.editing) {
+            if (!organizationChips.clearField()) focusPreview()
+            return true
+        }
         if (captionField.activeFocus) {
             captionField.text = root.caption
             captionField.focus = false
@@ -2819,6 +2825,14 @@ Item {
                         }
                     }
 
+                    OrganizationChips {
+                        id: organizationChips
+                        objectName: "previewOrganization"
+                        width: parent.width
+                        path: root.path
+                        onStatusRequested: function (message, undoId) { root.undoableStatusRequested(message, undoId) }
+                    }
+
                     // Technical details: codec, bitrate and stream lines,
                     // collapsed until asked for so the surface stays calm.
                     Column {
@@ -3234,6 +3248,16 @@ Item {
             root.actionNavigationActive = false
             root.showInfo = true
             captionField.forceActiveFocus()
+        }
+    }
+
+    Shortcut {
+        sequences: ShortcutCatalog.sequence("preview", "tag")
+        enabled: root.visible && !root.contextMenuOpen && root.enabled
+        onActivated: {
+            root.actionNavigationActive = false
+            root.showInfo = true
+            organizationChips.focusTagField()
         }
     }
 

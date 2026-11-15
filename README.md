@@ -251,14 +251,21 @@ Every viewer shortcut is listed in [Shortcuts](docs/shortcuts.md#viewer), and
   Tiles from other days show their date. Original photo and video dates are
   used when available. Add folders without importing or copying their files.
 - **Organize without changing originals.** Albums, nested tags, captions,
-  favourites, ratings and saved searches live in Omaroll's settings. Undo marks
-  and moves to Trash with Ctrl+Z, and back up or restore your organization from Settings.
+  favourites, ratings and saved searches live in Omaroll's settings. A file's
+  albums and tags show as chips under its caption in the preview and in the
+  viewer's details (`I`); `Alt+T` types a new tag, with suggestions, and Delete
+  on a chip removes it. Organize checks every album and tag for a selection,
+  showing which hold all, some or none of it. Ctrl+Z undoes marks, album and
+  tag changes and moves to Trash, and Settings backs up or restores your
+  organization.
 - **Keep what other photo tools wrote.** Keywords, star ratings and
   descriptions in a file's XMP or IPTC data, or in a darktable, Lightroom or
   digiKam `.xmp` sidecar, show as tags, stars and captions. Your own edits win,
   and removing a keyword or clearing a rating is kept in Omaroll's settings:
-  the file and its sidecar are never written. Renaming a file or moving it to
-  Trash takes its sidecar along.
+  the file and its sidecar are never written. Chips from a file's own keywords
+  show a file icon. Backups keep what you hid, not the keywords themselves,
+  which are read from the files again. Settings can turn reading them off.
+  Renaming a file or moving it to Trash takes its sidecar along.
 - **Find words in pictures and PDFs.** One search box covers names, picture
   and PDF text, captions, tags, albums, folders and cameras, ignoring accents.
   Narrow it with `tag:`, `in:`, `camera:`, `type:` or `before:`, quote a

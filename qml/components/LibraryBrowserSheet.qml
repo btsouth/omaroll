@@ -278,6 +278,7 @@ FocusScope {
         folderMessage = "Deleted " + name
                         + (views === 1 ? " and the saved view that used it"
                            : views > 1 ? " and " + views + " saved views that used it" : "")
+                        + (section === 4 ? "" : ". Ctrl+Z in the library puts it back.")
         Qt.callLater(syncCurrentChoice)
     }
 
@@ -710,7 +711,8 @@ FocusScope {
                                  && choices.currentIndex >= 0
                         label: "Delete selected"
                         toolTip: root.section === 3
-                                 ? "Remove this tag and any tags nested under it. Files are not deleted."
+                                 ? "Remove this tag and any tags nested under it. Keywords files carry "
+                                   + "are hidden here; files are not changed. Ctrl+Z in the library puts it back."
                                  : "Remove this collection. Files are not deleted."
                         onClicked: root.deleteCurrentChoice()
                     }

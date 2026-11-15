@@ -16767,6 +16767,427 @@ private slots:
     QCOMPARE(decoded.removedEmbeddedTags.keys(), QStringList{QStringLiteral("Noise")});
   }
 
+  // What the chips under a file and the Organize checks read.
+  void organizationForCountsAllSomeAndNone() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const auto profile = scratchProfile(dir);
+    const QString a = embeddedFixture(dir, QStringLiteral("a.png"));
+    const QString b = embeddedFixture(dir, QStringLiteral("b.png"));
+    const QString c = embeddedFixture(dir, QStringLiteral("c.png"));
+    AppSettings settings;
+    QVERIFY(settings.createAlbum(QStringLiteral("Trip")));
+    QVERIFY(settings.createAlbum(QStringLiteral("Empty")));
+    QVERIFY(settings.addToAlbum(QStringLiteral("Trip"), {a, b}));
+    QVERIFY(settings.createTag(QStringLiteral("Travel")));
+    QVERIFY(settings.addTag(QStringLiteral("Travel"), {a}));
+    settings.setEmbedded({embeddedUpdate(c, {QStringLiteral("wildlife")}),
+                          embeddedUpdate(b, {QStringLiteral("travel")})});
+
+    const auto rows = [&](const QStringList& paths) {
+      QHash<QString, QVariantMap> byName;
+      for (const QVariant& row : settings.organizationFor(paths)) {
+        const QVariantMap map = row.toMap();
+        byName.insert(map.value(QStringLiteral("kind")).toString() + QLatin1Char(':') +
+                          map.value(QStringLiteral("name")).toString(),
+                      map);
+      }
+      return byName;
+    };
+    const auto count = [](const QHash<QString, QVariantMap>& byName, const char* key) {
+      return byName.value(QString::fromLatin1(key)).value(QStringLiteral("count"), -1).toInt();
+    };
+    auto all = rows({a, b, c});
+    // Albums first, then tags, each listed whether or not a file holds it.
+    const QVariantList ordered = settings.organizationFor({a});
+    QCOMPARE(ordered.first().toMap().value(QStringLiteral("kind")).toString(), QStringLiteral("album"));
+    QCOMPARE(ordered.last().toMap().value(QStringLiteral("kind")).toString(), QStringLiteral("tag"));
+    QCOMPARE(count(all, "album:Trip"), 2);
+    QCOMPARE(count(all, "album:Empty"), 0);
+    // A local tag and the same keyword from a file count once per file, under
+    // the local spelling.
+    QCOMPARE(count(all, "tag:Travel"), 2);
+    QVERIFY(!all.contains(QStringLiteral("tag:travel")));
+    QCOMPARE(count(all, "tag:wildlife"), 1);
+    QVERIFY(all.value(QStringLiteral("tag:wildlife")).value(QStringLiteral("fromFile")).toBool());
+    QVERIFY(!all.value(QStringLiteral("tag:Travel")).value(QStringLiteral("fromFile")).toBool());
+    auto pair = rows({a, b});
+    QCOMPARE(count(pair, "album:Trip"), 2);
+    QCOMPARE(count(pair, "tag:Travel"), 2);
+    QCOMPARE(count(pair, "tag:wildlife"), 0);
+
+    // Chips: albums for the file, and each tag with where it came from.
+    QCOMPARE(settings.albumsForPath(a), QStringList{QStringLiteral("Trip")});
+    QVERIFY(settings.albumsForPath(c).isEmpty());
+    const auto sources = [&](const QString& path) {
+      QStringList out;
+      for (const QVariant& row : settings.tagSources(path)) {
+        const QVariantMap map = row.toMap();
+        out.append(map.value(QStringLiteral("name")).toString() +
+                   (map.value(QStringLiteral("fromFile")).toBool() ? QStringLiteral(" (file)") : QString()));
+      }
+      return out;
+    };
+    QCOMPARE(sources(a), QStringList{QStringLiteral("Travel")});
+    QCOMPARE(sources(b), QStringList{QStringLiteral("Travel (file)")});
+    QCOMPARE(sources(c), QStringList{QStringLiteral("wildlife (file)")});
+    // Tagged here as well, it is a local tag on that file.
+    QVERIFY(settings.addTag(QStringLiteral("wildlife"), {c}));
+    QCOMPARE(sources(c), QStringList{QStringLiteral("wildlife")});
+
+    // Removing a chip for a keyword from a file writes a removal row and
+    // leaves the file alone.
+    const QByteArray before = fileHash(b);
+    settings.removeTag(QStringLiteral("Travel"), {b});
+    QVERIFY(sources(b).isEmpty());
+    QCOMPARE(settings.organizationState().removedEmbeddedTags.value(QStringLiteral("Travel")).size(), 1);
+    QCOMPARE(fileHash(b), before);
+    QCOMPARE(count(rows({a, b}), "tag:Travel"), 1);
+  }
+
+  void matchTagsFindsWordStartsIgnoringCaseAndAccents() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const auto profile = scratchProfile(dir);
+    AppSettings settings;
+    for (const char* name : {"Café/Paris", "Travel/Japan", "Night sky", "Unravel", "Paris"})
+      QVERIFY(settings.createTag(QString::fromUtf8(name)));
+    QCOMPARE(settings.matchTags(QStringLiteral("cafe")),
+             QStringList({QString::fromUtf8("Café"), QString::fromUtf8("Café/Paris")}));
+    // The whole name first, then the last level, in tree order within each.
+    QCOMPARE(settings.matchTags(QStringLiteral("PAR")),
+             QStringList({QStringLiteral("Paris"), QString::fromUtf8("Café/Paris")}));
+    QCOMPARE(settings.matchTags(QStringLiteral("sky")), QStringList{QStringLiteral("Night sky")});
+    // Only at word starts.
+    QVERIFY(settings.matchTags(QStringLiteral("ravel")).isEmpty());
+    QCOMPARE(settings.matchTags(QStringLiteral("travel/ja")), QStringList{QStringLiteral("Travel/Japan")});
+    QCOMPARE(settings.matchTags(QStringLiteral("tra"), {QStringLiteral("travel")}),
+             QStringList{QStringLiteral("Travel/Japan")});
+    QVERIFY(settings.matchTags(QStringLiteral("  ")).isEmpty());
+    for (int index = 0; index < 12; ++index) QVERIFY(settings.createTag(QStringLiteral("t%1").arg(index)));
+    QCOMPARE(settings.matchTags(QStringLiteral("t")).size(), 8);
+    QCOMPARE(settings.matchTags(QStringLiteral("t"), {}, 3).size(), 3);
+  }
+
+  void everyAlbumAndTagChangeIsOneUndoStep() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const auto profile = scratchProfile(dir);
+    const QString a = embeddedFixture(dir, QStringLiteral("a.png"));
+    const QString b = embeddedFixture(dir, QStringLiteral("b.png"));
+    AppSettings settings;
+    const auto steps = [&] {
+      int count = 0;
+      for (const auto& step : settings.m_undoStack) count += step.isOrganization ? 1 : 0;
+      return count;
+    };
+
+    // Albums: create with members is one step, and so is every change after.
+    QVariantMap made = settings.createAlbumFor(QStringLiteral("Trip"), {a, b});
+    QVERIFY(made.value(QStringLiteral("created")).toBool());
+    QCOMPARE(made.value(QStringLiteral("count")).toInt(), 2);
+    QCOMPARE(steps(), 1);
+    QCOMPARE(settings.undo(), QStringLiteral("Removed new album Trip"));
+    QVERIFY(settings.albumNames().isEmpty());
+    QVERIFY(!settings.canUndo());
+    // A name that exists, ignoring case, is used rather than created, and a
+    // must-be-new create refuses it without changing anything.
+    QVERIFY(settings.createAlbum(QStringLiteral("Trip")));
+    QCOMPARE(settings.createAlbumFor(QStringLiteral("trip"), {a}).value(QStringLiteral("name")).toString(),
+             QStringLiteral("Trip"));
+    QCOMPARE(steps(), 2);
+    QVERIFY(settings.createAlbumFor(QStringLiteral("TRIP"), {b}, true).value(QStringLiteral("name")).toString().isEmpty());
+    QCOMPARE(steps(), 2);
+    QCOMPARE(settings.undo(), QStringLiteral("Took 1 item out of Trip"));
+    QVERIFY(settings.albumPaths(QStringLiteral("Trip")).isEmpty());
+    QVERIFY(settings.addToAlbum(QStringLiteral("Trip"), {a, b}));
+    // Adding again changes nothing and adds no step.
+    const int before = steps();
+    QVERIFY(!settings.addToAlbum(QStringLiteral("Trip"), {a}));
+    QCOMPARE(steps(), before);
+    settings.removeFromAlbum(QStringLiteral("Trip"), {a, b});
+    QCOMPARE(settings.undo(), QStringLiteral("Put 2 items back in Trip"));
+    QCOMPARE(settings.albumPaths(QStringLiteral("Trip")), QStringList({a, b}));
+    // Rename and delete bring their saved views back too.
+    QVERIFY(settings.saveSmartCollection(QStringLiteral("Trip view"), {{QStringLiteral("album"), QStringLiteral("Trip")}}));
+    QVERIFY(settings.renameAlbum(QStringLiteral("Trip"), QStringLiteral("Holiday")));
+    QCOMPARE(settings.smartCollection(QStringLiteral("Trip view")).value(QStringLiteral("album")).toString(),
+             QStringLiteral("Holiday"));
+    QCOMPARE(settings.undo(), QStringLiteral("Renamed album Holiday back to Trip"));
+    QCOMPARE(settings.albumNames(), QStringList{QStringLiteral("Trip")});
+    QCOMPARE(settings.smartCollection(QStringLiteral("Trip view")).value(QStringLiteral("album")).toString(),
+             QStringLiteral("Trip"));
+    QCOMPARE(settings.deleteAlbum(QStringLiteral("Trip")), 1);
+    QVERIFY(settings.smartCollectionNames().isEmpty());
+    QCOMPARE(settings.undo(), QStringLiteral("Put back album Trip"));
+    QCOMPARE(settings.albumPaths(QStringLiteral("Trip")), QStringList({a, b}));
+    QCOMPARE(settings.smartCollectionNames(), QStringList{QStringLiteral("Trip view")});
+
+    // Tags, including a keyword from a file.
+    settings.setEmbedded({embeddedUpdate(b, {QStringLiteral("Travel/Japan")})});
+    made = settings.createTagFor(QStringLiteral("travel"), {a});
+    // The keyword's tag exists already, so it is used, not created.
+    QCOMPARE(made.value(QStringLiteral("name")).toString(), QStringLiteral("Travel"));
+    QVERIFY(!made.value(QStringLiteral("created")).toBool());
+    QCOMPARE(settings.tagPaths(QStringLiteral("Travel")), QStringList({a, b}));
+    QCOMPARE(settings.undo(), QStringLiteral("Took tag Travel off 1 item"));
+    QCOMPARE(settings.tagPaths(QStringLiteral("Travel")), QStringList{b});
+    made = settings.createTagFor(QStringLiteral(" Night / sky "), {a, b});
+    QCOMPARE(made.value(QStringLiteral("name")).toString(), QStringLiteral("Night/sky"));
+    QVERIFY(made.value(QStringLiteral("created")).toBool());
+    QCOMPARE(settings.undo(), QStringLiteral("Removed new tag Night/sky"));
+    QVERIFY(!settings.tagNames().contains(QStringLiteral("Night")));
+    QVERIFY(settings.addTag(QStringLiteral("Travel/Japan"), {a}));
+    // Removing it from both: the local entry goes and the keyword is hidden
+    // with a removal row, all in one step.
+    settings.removeTag(QStringLiteral("Travel/Japan"), {a, b});
+    QVERIFY(settings.tagsForPath(a).isEmpty());
+    QVERIFY(settings.tagsForPath(b).isEmpty());
+    QCOMPARE(settings.organizationState().removedEmbeddedTags.size(), 1);
+    QCOMPARE(settings.undo(), QStringLiteral("Put back tag Travel/Japan on 2 items"));
+    QCOMPARE(settings.tagsForPath(a), QStringList{QStringLiteral("Travel/Japan")});
+    QCOMPARE(settings.tagsForPath(b), QStringList{QStringLiteral("Travel/Japan")});
+    QVERIFY(settings.organizationState().removedEmbeddedTags.isEmpty());
+    // Undo is saved: a restart sees the keyword again.
+    {
+      AppSettings restarted;
+      restarted.setEmbedded({embeddedUpdate(b, {QStringLiteral("Travel/Japan")})});
+      QCOMPARE(restarted.tagsForPath(b), QStringList{QStringLiteral("Travel/Japan")});
+    }
+    QVERIFY(settings.saveSmartCollection(QStringLiteral("Japan"), {{QStringLiteral("tag"), QStringLiteral("Travel/Japan")}}));
+    QVERIFY(settings.renameTag(QStringLiteral("Travel"), QStringLiteral("Trips")));
+    QCOMPARE(settings.tagsForPath(b), QStringList{QStringLiteral("Trips/Japan")});
+    QCOMPARE(settings.undo(), QStringLiteral("Renamed tag Trips back to Travel"));
+    QCOMPARE(settings.tagsForPath(b), QStringList{QStringLiteral("Travel/Japan")});
+    QVERIFY(!settings.tagNames().contains(QStringLiteral("Trips")));
+    QCOMPARE(settings.smartCollection(QStringLiteral("Japan")).value(QStringLiteral("tag")).toString(),
+             QStringLiteral("Travel/Japan"));
+    QCOMPARE(settings.deleteTag(QStringLiteral("Travel")), 1);
+    QVERIFY(settings.tagsForPath(b).isEmpty());
+    QCOMPARE(settings.undo(), QStringLiteral("Put back tag Travel"));
+    QCOMPARE(settings.tagsForPath(a), QStringList{QStringLiteral("Travel/Japan")});
+    QCOMPARE(settings.tagsForPath(b), QStringList{QStringLiteral("Travel/Japan")});
+    QVERIFY(settings.smartCollectionNames().contains(QStringLiteral("Japan")));
+
+    // Marks and organization share one history, newest first.
+    settings.setRating({a}, 3);
+    settings.removeTag(QStringLiteral("Travel/Japan"), {a});
+    QCOMPARE(settings.undo(), QStringLiteral("Put back tag Travel/Japan on 1 item"));
+    QCOMPARE(settings.rating(a), 3);
+    settings.undo();
+    QCOMPARE(settings.rating(a), 0);
+    QVERIFY(settings.tagsForPath(a).contains(QStringLiteral("Travel/Japan")));
+
+    // A restored backup makes organization steps stale; they go.
+    const QString backup = dir.filePath(QStringLiteral("backup.json"));
+    QVERIFY(settings.exportOrganization(backup).value(QStringLiteral("ok")).toBool());
+    settings.removeTag(QStringLiteral("Travel/Japan"), {a});
+    QVERIFY(steps() > 0);
+    QVERIFY(settings.importOrganization(backup).value(QStringLiteral("ok")).toBool());
+    QCOMPARE(steps(), 0);
+    QVERIFY(settings.tagsForPath(a).contains(QStringLiteral("Travel/Japan")));
+  }
+
+  // A keyword hidden from a chip stays hidden through a rescan, a restart
+  // and a backup round trip, and undo puts it back for all of them.
+  void hiddenKeywordsSurviveARescanAndABackup() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const auto profile = scratchProfile(dir);
+    QVERIFY(QDir().mkpath(dir.filePath(QStringLiteral("library"))));
+    const QString file = embeddedFixture(dir, QStringLiteral("library/bird.png"));
+    const auto load = [&](AppSettings& settings) {
+      settings.setEmbedded({embeddedUpdate(file, {QStringLiteral("kestrel"), QStringLiteral("wildlife")})});
+    };
+    const auto scan = [&] {
+      return CaptureScanner::scan({{dir.filePath(QStringLiteral("library")), 2, CaptureRecord::Picture,
+                                    CaptureRecord::Video}});
+    };
+    const QString backup = dir.filePath(QStringLiteral("backup.json"));
+    {
+      AppSettings settings;
+      load(settings);
+      settings.removeTag(QStringLiteral("kestrel"), {file});
+      settings.waitForFingerprints();
+      settings.reconcileTags(scan());
+      load(settings);
+      QCOMPARE(settings.tagsForPath(file), QStringList{QStringLiteral("wildlife")});
+      QVERIFY(settings.exportOrganization(backup).value(QStringLiteral("ok")).toBool());
+    }
+    {
+      AppSettings settings;
+      load(settings);
+      settings.reconcileTags(scan());
+      QCOMPARE(settings.tagsForPath(file), QStringList{QStringLiteral("wildlife")});
+      // Restoring the backup keeps it hidden.
+      QVERIFY(settings.importOrganization(backup).value(QStringLiteral("ok")).toBool());
+      QCOMPARE(settings.tagsForPath(file), QStringList{QStringLiteral("wildlife")});
+      settings.removeTag(QStringLiteral("wildlife"), {file});
+      QVERIFY(settings.tagsForPath(file).isEmpty());
+      settings.reconcileTags(scan());
+      QVERIFY(settings.tagsForPath(file).isEmpty());
+      QCOMPARE(settings.undo(), QStringLiteral("Put back tag wildlife on 1 item"));
+      settings.reconcileTags(scan());
+      QCOMPARE(settings.tagsForPath(file), QStringList{QStringLiteral("wildlife")});
+    }
+  }
+
+  // An undo step puts back only the saved views it changed itself.
+  void undoLeavesViewsSavedOrDeletedAfterItAlone() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const auto profile = scratchProfile(dir);
+    const QString file = embeddedFixture(dir, QStringLiteral("a.png"));
+    {
+      AppSettings settings;
+      // A view saved after a tag change survives undoing it, and a restart.
+      QVERIFY(settings.createTagFor(QStringLiteral("Travel"), {file}).value(QStringLiteral("created")).toBool());
+      QVERIFY(settings.saveSmartCollection(QStringLiteral("Later view"), {{QStringLiteral("favorite"), true}}));
+      QCOMPARE(settings.undo(), QStringLiteral("Removed new tag Travel"));
+      QVERIFY(!settings.tagNames().contains(QStringLiteral("Travel")));
+      QCOMPARE(settings.smartCollectionNames(), QStringList{QStringLiteral("Later view")});
+    }
+    {
+      AppSettings settings;
+      QCOMPARE(settings.smartCollectionNames(), QStringList{QStringLiteral("Later view")});
+      // A view deleted after a tag change stays deleted.
+      QVERIFY(settings.saveSmartCollection(QStringLiteral("Gone"), {{QStringLiteral("favorite"), true}}));
+      QVERIFY(settings.createTagFor(QStringLiteral("Food"), {file}).value(QStringLiteral("created")).toBool());
+      settings.deleteSmartCollection(QStringLiteral("Gone"));
+      QCOMPARE(settings.undo(), QStringLiteral("Removed new tag Food"));
+      QVERIFY(!settings.smartCollectionNames().contains(QStringLiteral("Gone")));
+      // A rename puts back the view it renamed, and leaves one saved since.
+      QVERIFY(settings.createTag(QStringLiteral("Places/Japan")));
+      QVERIFY(settings.addTag(QStringLiteral("Places/Japan"), {file}));
+      QVERIFY(settings.saveSmartCollection(QStringLiteral("Japan"), {{QStringLiteral("tag"), QStringLiteral("Places/Japan")}}));
+      QVERIFY(settings.renameTag(QStringLiteral("Places"), QStringLiteral("Trips")));
+      QVERIFY(settings.saveSmartCollection(QStringLiteral("New"), {{QStringLiteral("tag"), QStringLiteral("Trips/Japan")}}));
+      QCOMPARE(settings.undo(), QStringLiteral("Renamed tag Trips back to Places"));
+      QCOMPARE(settings.smartCollection(QStringLiteral("Japan")).value(QStringLiteral("tag")).toString(),
+               QStringLiteral("Places/Japan"));
+      QCOMPARE(settings.smartCollection(QStringLiteral("New")).value(QStringLiteral("tag")).toString(),
+               QStringLiteral("Trips/Japan"));
+      QCOMPARE(settings.smartCollectionNames(),
+               QStringList({QStringLiteral("Japan"), QStringLiteral("Later view"), QStringLiteral("New")}));
+      // A view the rename changed and the user then edited keeps the edit.
+      QVERIFY(settings.renameTag(QStringLiteral("Places"), QStringLiteral("Trips")));
+      QCOMPARE(settings.smartCollection(QStringLiteral("Japan")).value(QStringLiteral("tag")).toString(),
+               QStringLiteral("Trips/Japan"));
+      const QVariantMap edited{{QStringLiteral("tag"), QStringLiteral("Trips/Japan")}, {QStringLiteral("favorite"), true}};
+      QVERIFY(settings.saveSmartCollection(QStringLiteral("Japan"), edited));
+      QCOMPARE(settings.undo(), QStringLiteral("Renamed tag Trips back to Places"));
+      QVERIFY(settings.tagNames().contains(QStringLiteral("Places/Japan")));
+      QCOMPARE(settings.smartCollection(QStringLiteral("Japan")), edited);
+      // And one deleted after the rename stays deleted.
+      QVERIFY(settings.saveSmartCollection(QStringLiteral("Japan"), {{QStringLiteral("tag"), QStringLiteral("Places/Japan")}}));
+      QVERIFY(settings.renameTag(QStringLiteral("Places"), QStringLiteral("Trips")));
+      settings.deleteSmartCollection(QStringLiteral("Japan"));
+      QCOMPARE(settings.undo(), QStringLiteral("Renamed tag Trips back to Places"));
+      QVERIFY(!settings.smartCollectionNames().contains(QStringLiteral("Japan")));
+    }
+  }
+
+  // Undo snapshots share the organization with the live state; a rescan or
+  // a fingerprint pass that changes nothing must not copy it away from them.
+  void undoSnapshotsKeepSharingThroughAnUnchangedRescan() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const auto profile = scratchProfile(dir);
+    QVERIFY(QDir().mkpath(dir.filePath(QStringLiteral("library"))));
+    const QString a = embeddedFixture(dir, QStringLiteral("library/a.png"));
+    const QString b = embeddedFixture(dir, QStringLiteral("library/b.png"));
+    const auto records = CaptureScanner::scan({{dir.filePath(QStringLiteral("library")), 2, CaptureRecord::Picture,
+                                                CaptureRecord::Video}});
+    AppSettings settings;
+    settings.setEmbedded({embeddedUpdate(b, {QStringLiteral("Noise"), QStringLiteral("Keep")})});
+    QVERIFY(settings.createAlbum(QStringLiteral("Trip")));
+    QVERIFY(settings.addToAlbum(QStringLiteral("Trip"), {a}));
+    QVERIFY(settings.createTag(QStringLiteral("Travel")));
+    QVERIFY(settings.addTag(QStringLiteral("Travel"), {a}));
+    settings.removeTag(QStringLiteral("Noise"), {b});
+    settings.waitForFingerprints();
+    settings.reconcileAlbums(records);
+    settings.reconcileTags(records);
+    settings.waitForFingerprints();
+    // Three steps, each changing one map: tags, then albums, then hidden
+    // rows. The maps a step left alone are the live ones, shared.
+    QVERIFY(settings.addTag(QStringLiteral("Travel"), {b}));
+    QVERIFY(settings.addToAlbum(QStringLiteral("Trip"), {b}));
+    settings.removeTag(QStringLiteral("Keep"), {b});
+    settings.waitForFingerprints();
+    QVERIFY(settings.m_undoStack.size() >= 3);
+    const auto& albumStep = settings.m_undoStack.at(settings.m_undoStack.size() - 2).organization;
+    const auto& hideStep = settings.m_undoStack.constLast().organization;
+    const auto shared = [&] {
+      return albumStep.tags.isSharedWith(settings.m_tags) && hideStep.tags.isSharedWith(settings.m_tags) &&
+             hideStep.albums.isSharedWith(settings.m_albums);
+    };
+    QVERIFY(shared());
+    // Changing nothing writes nothing.
+    QVERIFY(!settings.addToAlbum(QStringLiteral("Trip"), {b}));
+    QVERIFY(!settings.addTag(QStringLiteral("Travel"), {b}));
+    settings.removeTag(QStringLiteral("Absent"), {a});
+    settings.removeFromAlbum(QStringLiteral("Trip"), {dir.filePath(QStringLiteral("none.png"))});
+    QVERIFY(shared());
+    const auto removed = settings.m_removedEmbeddedTags;
+    for (int round = 0; round < 2; ++round) {
+      settings.reconcileAlbums(records);
+      settings.reconcileTags(records);
+      settings.waitForFingerprints();
+      QVERIFY2(shared(), qPrintable(QString::number(round)));
+      QVERIFY(removed.isSharedWith(settings.m_removedEmbeddedTags));
+    }
+    // And the history is still there.
+    QCOMPARE(settings.undo(), QStringLiteral("Put back tag Keep on 1 item"));
+  }
+
+  // A rescan that repairs a file moved outside Omaroll changes organization
+  // the undo snapshots do not know, so it ends their history; undoing past
+  // it would put the moved file back at its old path.
+  void aRescanThatRepairsAMoveEndsOrganizationUndo() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const auto profile = scratchProfile(dir);
+    QVERIFY(QDir().mkpath(dir.filePath(QStringLiteral("library/sub"))));
+    const QString a = embeddedFixture(dir, QStringLiteral("library/a.png"));
+    const QString b = embeddedFixture(dir, QStringLiteral("library/b.png"));
+    const auto scan = [&] {
+      return CaptureScanner::scan({{dir.filePath(QStringLiteral("library")), 2, CaptureRecord::Picture,
+                                    CaptureRecord::Video}});
+    };
+    AppSettings settings;
+    QVERIFY(settings.createAlbum(QStringLiteral("Trip")));
+    QVERIFY(settings.addToAlbum(QStringLiteral("Trip"), {b}));
+    settings.reconcileAlbums(scan());
+    settings.reconcileTags(scan());
+    QVERIFY(settings.createTagFor(QStringLiteral("Travel"), {a}).value(QStringLiteral("created")).toBool());
+    // An ordinary rescan keeps the history.
+    settings.reconcileAlbums(scan());
+    settings.reconcileTags(scan());
+    QVERIFY(settings.canUndo());
+    const QString moved = dir.filePath(QStringLiteral("library/sub/b.png"));
+    QVERIFY(QFile::rename(b, moved));
+    settings.reconcileAlbums(scan());
+    QCOMPARE(settings.albumPaths(QStringLiteral("Trip")), QStringList{moved});
+    QVERIFY(!settings.canUndo());
+    QVERIFY(settings.undo().isEmpty());
+    QCOMPARE(settings.albumPaths(QStringLiteral("Trip")), QStringList{moved});
+  }
+
+  // A create that is refused lets go of the snapshot it took.
+  void aRefusedCreateHoldsNoSnapshot() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const auto profile = scratchProfile(dir);
+    AppSettings settings;
+    QVERIFY(settings.createAlbum(QStringLiteral("Trip")));
+    QVERIFY(settings.createTagFor(QStringLiteral("/ /"), {}).value(QStringLiteral("name")).toString().isEmpty());
+    QVERIFY(settings.createTagFor(QStringLiteral("Trip"), {}, true).value(QStringLiteral("created")).toBool());
+    QVERIFY(settings.createTagFor(QStringLiteral("trip"), {}, true).value(QStringLiteral("name")).toString().isEmpty());
+    QVERIFY(settings.m_groupBefore.albums.isEmpty());
+    QVERIFY(settings.m_groupBefore.tags.isEmpty());
+  }
+
   void keywordsFromFilesAreReadOnceOffTheWindowThread() {
     MetadataSandbox sandbox("records \"$@\"\nprintf 'image\\n' >> \"$OMAROLL_METADATA_LOG\"\n");
     QVERIFY(sandbox.valid());
