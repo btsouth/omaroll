@@ -20,6 +20,8 @@ FocusScope {
     property int highlighted: -1
     // What happened, and the undo step that takes it back (0 for none).
     signal tagged(string message, int undoId)
+    // Ctrl+Z with nothing typed: the app's undo, not the field's.
+    signal undoRequested()
 
     readonly property color textColour: root.osd ? Osd.foreground : Theme.foreground
     readonly property color mutedColour: root.osd ? Osd.mutedText : Theme.mutedText
@@ -89,7 +91,7 @@ FocusScope {
 
     // Clears what was typed. False when there was nothing to clear, so a
     // second Escape can leave the field.
-    function escape() {
+    function clearTyped() {
         if (input.text === "" && root.rows.length === 0) return false
         input.text = ""
         root.refresh()
@@ -135,6 +137,12 @@ FocusScope {
         onActiveFocusChanged: root.refresh()
 
         Keys.onPressed: function (event) {
+            if (event.key === Qt.Key_Z && (event.modifiers & Qt.ControlModifier)
+                    && !(event.modifiers & (Qt.ShiftModifier | Qt.AltModifier)) && input.text === "") {
+                root.undoRequested()
+                event.accepted = true
+                return
+            }
             const modified = event.modifiers & (Qt.ControlModifier | Qt.AltModifier)
             if (modified) return
             if ((event.key === Qt.Key_Down || event.key === Qt.Key_Up) && root.rows.length > 0) {
@@ -156,7 +164,7 @@ FocusScope {
                 event.accepted = true
             } else if (event.key === Qt.Key_Escape) {
                 // Not taken when empty: the window's Escape then leaves.
-                event.accepted = root.escape()
+                event.accepted = root.clearTyped()
             }
         }
     }

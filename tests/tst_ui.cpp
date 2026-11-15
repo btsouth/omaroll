@@ -937,8 +937,13 @@ private slots:
     QTRY_VERIFY(!caption->hasActiveFocus());
     QTest::keyClick(m_window, Qt::Key_C, Qt::AltModifier);
     QTRY_VERIFY(caption->hasActiveFocus());
+    // Past the file's chips, if any, and the tag field.
     QTest::keyClick(m_window, Qt::Key_Tab);
+    QQuickItem* tagInput = item("tagFieldInput");
     QQuickItem* technical = item("viewerTechnicalToggle");
+    for (int guard = 0; guard < 8 && !tagInput->hasActiveFocus(); ++guard) QTest::keyClick(m_window, Qt::Key_Tab);
+    QTRY_VERIFY(tagInput->hasActiveFocus());
+    QTest::keyClick(m_window, Qt::Key_Tab);
     QTRY_VERIFY(technical->hasActiveFocus());
     auto* scroll = item("inspectorScroll");
     QTRY_VERIFY(technical->mapToItem(scroll, QPointF()).y() >= 0);
@@ -8192,6 +8197,202 @@ private slots:
     QCOMPARE(m_settings->tagPaths(QStringLiteral("UI Review")), QStringList{selected});
     m_settings->deleteTag(QStringLiteral("UI Review"));
     QMetaObject::invokeMethod(item("library"), "clearChecked");
+  }
+
+  // Organize: the filter has focus on open, arrows reach the checks, Space
+  // turns a mixed check into all and all into none, typing goes back to the
+  // field, and a name that matches nothing can be created. Each change is
+  // one undo step the footer offers.
+  void organizeChecksFilterToggleAndCreate() {
+    const QString first = pathAt(0), second = pathAt(1);
+    const QString album = QStringLiteral("Organize trip");
+    const QString tag = QStringLiteral("organizez");
+    QVERIFY(m_settings->createAlbum(album));
+    QVERIFY(m_settings->addToAlbum(album, {first}));
+    QQuickItem* grid = item("library");
+    QMetaObject::invokeMethod(grid, "toggleChecked", Q_ARG(QVariant, first));
+    QMetaObject::invokeMethod(grid, "toggleChecked", Q_ARG(QVariant, second));
+    QObject* menu = m_window->findChild<QObject*>(QStringLiteral("albumActionMenu"));
+    QVERIFY(menu);
+    const auto cleanup = qScopeGuard([&] {
+      QMetaObject::invokeMethod(menu, "close");
+      QMetaObject::invokeMethod(grid, "clearChecked");
+      m_settings->deleteAlbum(album);
+      m_settings->deleteTag(tag);
+    });
+    QQuickItem* organize = pill(m_window->contentItem(), QStringLiteral("Organize"));
+    QVERIFY(organize);
+    waitForLayout();
+    organize = pill(m_window->contentItem(), QStringLiteral("Organize"));
+    click(organize);
+    QTRY_VERIFY(menu->property("visible").toBool());
+    QVERIFY(menu->property("width").toReal() <= 320);
+    QQuickItem* filter = item("organizeFilter");
+    QTRY_VERIFY(filter->hasActiveFocus());
+    typeText(QStringLiteral("organize"));
+    // Rows are made again whenever organization changes, so look each time.
+    const auto albumRow = [&] {
+      return find(m_window->contentItem(), [&](QQuickItem* candidate) {
+        return candidate->objectName() == QStringLiteral("organizeRow_album_") + album && candidate->isVisible();
+      });
+    };
+    const auto checkState = [&] {
+      QQuickItem* row = albumRow();
+      return row ? row->property("checkState").toInt() : -1;
+    };
+    QTRY_VERIFY(albumRow() != nullptr);
+    QCOMPARE(checkState(), int(Qt::PartiallyChecked));
+    QAccessibleInterface* accessible = QAccessible::queryAccessibleInterface(albumRow());
+    QVERIFY(accessible);
+    QCOMPARE(accessible->role(), QAccessible::CheckBox);
+    QCOMPARE(accessible->text(QAccessible::Name), album + QStringLiteral(", album, on 1 of 2"));
+    QVERIFY(accessible->state().checkStateMixed);
+    // Only matching rows, then a create row for the kinds the name misses.
+    QQuickItem* list = item("organizeList");
+    const QVariantList rows = menu->property("rows").value<QJSValue>().toVariant().toList();
+    QCOMPARE(rows.first().toMap().value(QStringLiteral("name")).toString(), album);
+    QCOMPARE(rows.last().toMap().value(QStringLiteral("kind")).toString(), QStringLiteral("tag"));
+    QVERIFY(rows.last().toMap().value(QStringLiteral("create")).toBool());
+
+    QTest::keyClick(m_window, Qt::Key_Down);
+    QTRY_VERIFY(list->hasActiveFocus());
+    QCOMPARE(list->property("currentIndex").toInt(), 0);
+    QTest::keyClick(m_window, Qt::Key_Space);
+    QTRY_COMPARE(m_settings->albumPaths(album).size(), 2);
+    QTRY_COMPARE(checkState(), int(Qt::Checked));
+    QVERIFY(QAccessible::queryAccessibleInterface(albumRow())->state().checked);
+    // The current row stays where it was.
+    QCOMPARE(list->property("currentIndex").toInt(), 0);
+    // The footer offers Undo for it.
+    QTRY_VERIFY(item("footerUndoButton")->isVisible());
+    QTest::keyClick(m_window, Qt::Key_Space);
+    QTRY_VERIFY(m_settings->albumPaths(album).isEmpty());
+    QTRY_COMPARE(checkState(), int(Qt::Unchecked));
+
+    // Typing on the list goes back to the field.
+    QTest::keyClick(m_window, Qt::Key_Z);
+    QTRY_VERIFY(filter->hasActiveFocus());
+    QCOMPARE(filter->property("text").toString(), tag);
+    QTest::keyClick(m_window, Qt::Key_End);
+    QTest::keyClick(m_window, Qt::Key_Down);
+    QTRY_VERIFY(list->hasActiveFocus());
+    QTest::keyClick(m_window, Qt::Key_End);
+    const QVariantList created = menu->property("rows").value<QJSValue>().toVariant().toList();
+    QCOMPARE(list->property("currentIndex").toInt(), created.size() - 1);
+    QTest::keyClick(m_window, Qt::Key_Return);
+    QTRY_COMPARE(m_settings->tagPaths(tag).size(), 2);
+    QVERIFY(menu->property("visible").toBool());
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(!menu->property("visible").toBool());
+    // One Ctrl+Z takes back both the new tag and its files.
+    QTest::keyClick(m_window, Qt::Key_Z, Qt::ControlModifier);
+    QTRY_VERIFY(!m_settings->tagNames().contains(tag));
+    QVERIFY(m_settings->tagPaths(tag).isEmpty());
+  }
+
+  // The preview's chips: Alt+T adds a tag, Tab reaches its chip, Delete
+  // removes it and Ctrl+Z puts it back.
+  void previewChipsAddRemoveAndUndo() {
+    openDetail(0);
+    QQuickItem* detail = item("detail");
+    QTRY_VERIFY(detail->isVisible());
+    const QString path = detail->property("path").toString();
+    const QString tag = QStringLiteral("zzchip");
+    const auto cleanup = qScopeGuard([&] { m_settings->deleteTag(tag); });
+    QTest::keyClick(m_window, Qt::Key_T, Qt::AltModifier);
+    QQuickItem* input = item("tagFieldInput");
+    QTRY_VERIFY(input->hasActiveFocus());
+    typeText(tag);
+    QTest::keyClick(m_window, Qt::Key_Return);
+    QTRY_COMPARE(m_settings->tagPaths(tag), QStringList{path});
+    QCOMPARE(input->property("text").toString(), QString());
+    QVERIFY(input->hasActiveFocus());
+    QQuickItem* chip = nullptr;
+    QTRY_VERIFY((chip = find(m_window->contentItem(), [&](QQuickItem* candidate) {
+      return candidate->objectName() == QStringLiteral("organizationChip_tag_") + tag && candidate->isVisible();
+    })) != nullptr);
+    QCOMPARE(QAccessible::queryAccessibleInterface(chip)->text(QAccessible::Name), QStringLiteral("Tag ") + tag);
+    // The chip before the field, from the keyboard.
+    QTest::keyClick(m_window, Qt::Key_Backtab);
+    QTRY_VERIFY(chip->hasActiveFocus());
+    QTest::keyClick(m_window, Qt::Key_Delete);
+    QTRY_VERIFY(m_settings->tagPaths(tag).isEmpty());
+    QVERIFY(detail->isVisible());
+    QTest::keyClick(m_window, Qt::Key_Z, Qt::ControlModifier);
+    QTRY_COMPARE(m_settings->tagPaths(tag), QStringList{path});
+    QTRY_VERIFY(find(m_window->contentItem(), [&](QQuickItem* candidate) {
+      return candidate->objectName() == QStringLiteral("organizationChip_tag_") + tag && candidate->isVisible();
+    }) != nullptr);
+  }
+
+  // The tag field's suggestions: Up and Down move, Tab completes, a comma
+  // adds and keeps typing, Enter creates, and Escape clears then leaves.
+  void tagFieldSuggestionsFollowTheKeys() {
+    const QStringList tags = {QStringLiteral("Autumn"), QStringLiteral("Autumn/Forest"),
+                              QStringLiteral("Autumn leaves")};
+    for (const QString& tag : tags) QVERIFY(m_settings->createTag(tag));
+    const auto cleanup = qScopeGuard([&] {
+      m_settings->deleteTag(QStringLiteral("Autumn"));
+      m_settings->deleteTag(QStringLiteral("Autumn leaves"));
+      m_settings->deleteTag(QStringLiteral("zq"));
+    });
+    m_window->resize(560, 420);
+    const auto restore = qScopeGuard([&] { m_window->resize(1280, 820); });
+    openDetail(1);
+    QQuickItem* detail = item("detail");
+    QTRY_VERIFY(detail->isVisible());
+    const QString path = detail->property("path").toString();
+    QTest::keyClick(m_window, Qt::Key_T, Qt::AltModifier);
+    QQuickItem* field = item("organizationTagField");
+    QQuickItem* input = item("tagFieldInput");
+    QTRY_VERIFY(input->hasActiveFocus());
+    // Revealed in the scrolled details at a narrow width, at their width.
+    QQuickItem* scroll = item("inspectorScroll");
+    QTRY_VERIFY(field->mapToItem(scroll, QPointF()).y() >= 0);
+    QVERIFY(field->mapToItem(scroll, QPointF(0, field->height())).y() <= scroll->height());
+    typeText(QStringLiteral("aut"));
+    const auto rows = [&] { return field->property("rows").value<QJSValue>().toVariant().toList(); };
+    const auto name = [&](int index) { return rows().value(index).toMap().value(QStringLiteral("name")).toString(); };
+    QTRY_COMPARE(rows().size(), 4);
+    QCOMPARE(name(0), QStringLiteral("Autumn"));
+    QCOMPARE(name(1), QStringLiteral("Autumn/Forest"));
+    QCOMPARE(name(2), QStringLiteral("Autumn leaves"));
+    QVERIFY(rows().value(3).toMap().value(QStringLiteral("create")).toBool());
+    QTRY_VERIFY(item("tagSuggestionList")->isVisible());
+    QCOMPARE(field->property("highlighted").toInt(), 0);
+    QTest::keyClick(m_window, Qt::Key_Down);
+    QTest::keyClick(m_window, Qt::Key_Down);
+    QTest::keyClick(m_window, Qt::Key_Up);
+    QCOMPARE(field->property("highlighted").toInt(), 1);
+    QTest::keyClick(m_window, Qt::Key_Down);
+    QTest::keyClick(m_window, Qt::Key_Tab);
+    QCOMPARE(input->property("text").toString(), QStringLiteral("Autumn leaves"));
+    QVERIFY(input->hasActiveFocus());
+    // Tab took the name; the row is now the exact match, with no create row.
+    QTRY_COMPARE(name(0), QStringLiteral("Autumn leaves"));
+    QVERIFY(!rows().last().toMap().value(QStringLiteral("create")).toBool());
+    QTest::keyClick(m_window, Qt::Key_Comma);
+    QTRY_VERIFY(m_settings->tagsForPath(path).contains(QStringLiteral("Autumn leaves")));
+    QCOMPARE(input->property("text").toString(), QString());
+    QVERIFY(input->hasActiveFocus());
+    // Tags on the file are not suggested again.
+    typeText(QStringLiteral("autumn l"));
+    QTRY_VERIFY(!rows().isEmpty());
+    for (const QVariant& row : rows())
+      QVERIFY(row.toMap().value(QStringLiteral("name")).toString() != QStringLiteral("Autumn leaves"));
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_COMPARE(input->property("text").toString(), QString());
+    typeText(QStringLiteral("zq"));
+    QTRY_COMPARE(rows().size(), 1);
+    QTest::keyClick(m_window, Qt::Key_Return);
+    QTRY_VERIFY(m_settings->tagsForPath(path).contains(QStringLiteral("zq")));
+    // With nothing typed, Escape leaves the field and the preview stays.
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(!input->hasActiveFocus());
+    QVERIFY(detail->isVisible());
+    // The chips wrap inside the narrow details.
+    QQuickItem* flow = item("organizationChipFlow");
+    QVERIFY(flow->width() <= scroll->width());
   }
 
   // The Trash question says when .xmp sidecars go along, for one file and

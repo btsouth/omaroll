@@ -48,7 +48,7 @@ Column {
 
     // Escape while typing a tag: clears it, and says whether it did.
     function clearField() {
-        return field.escape()
+        return field.clearTyped()
     }
 
     function remove(index) {
@@ -187,5 +187,6 @@ Column {
         present: root.chips.filter(function (chip) { return chip.kind === "tag" })
                      .map(function (chip) { return chip.name })
         onTagged: function (message, undoId) { root.statusRequested(message, undoId) }
+        onUndoRequested: if (Settings.canUndo()) root.statusRequested(Settings.undo(), 0)
     }
 }

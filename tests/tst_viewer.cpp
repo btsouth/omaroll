@@ -5365,6 +5365,66 @@ private slots:
     QVERIFY(!panel->isVisible());
   }
 
+  // The details carry the file's chips and a tag field. Alt+T reaches the
+  // field while they are shown, and the panel's own status line offers Undo.
+  void infoPanelChipsAltTAndTheStatusUndo() {
+    const QString path = media(QStringLiteral("shot 2.jpg"));
+    const QString tag = QStringLiteral("viewerchip");
+    const auto cleanup = qScopeGuard([&] {
+      m_settings->deleteTag(tag);
+      m_settings->deleteAlbum(QStringLiteral("Viewer album"));
+    });
+    QVERIFY(m_settings->createAlbum(QStringLiteral("Viewer album")));
+    QVERIFY(m_settings->addToAlbum(QStringLiteral("Viewer album"), {path}));
+    open({path});
+    QQuickItem* input = item(QStringLiteral("tagFieldInput"));
+    // Not while the details are hidden: Alt+T does nothing then.
+    QTest::keyClick(m_window, Qt::Key_T, Qt::AltModifier);
+    QVERIFY(!input->hasActiveFocus());
+    QTest::keyClick(m_window, Qt::Key_I);
+    QTRY_VERIFY(item(QStringLiteral("viewerInfoPanel"))->isVisible());
+    const auto chip = [&](const QString& name) {
+      return find(m_window->contentItem(), [&](QQuickItem* candidate) {
+        return candidate->objectName() == name && candidate->isVisible();
+      });
+    };
+    QTRY_VERIFY(chip(QStringLiteral("organizationChip_album_Viewer album")) != nullptr);
+    QTest::keyClick(m_window, Qt::Key_T, Qt::AltModifier);
+    QTRY_VERIFY(input->hasActiveFocus());
+    QVERIFY(prop("controlsFocused").toBool());
+    for (const QChar character : tag) QTest::keyClick(m_window, character.toLatin1());
+    QTest::keyClick(m_window, Qt::Key_Return);
+    QTRY_COMPARE(m_settings->tagPaths(tag), QStringList{path});
+    QTRY_VERIFY(chip(QStringLiteral("organizationChip_tag_") + tag) != nullptr);
+    QQuickItem* status = item(QStringLiteral("viewerInfoStatus"));
+    QTRY_VERIFY(status->isVisible());
+    QQuickItem* undo = item(QStringLiteral("viewerInfoUndo"));
+    QVERIFY(undo->isVisible());
+    QCOMPARE(QAccessible::queryAccessibleInterface(undo)->role(), QAccessible::Button);
+    // The Undo link takes the tag back off.
+    undo->forceActiveFocus(Qt::TabFocusReason);
+    QTest::keyClick(m_window, Qt::Key_Space);
+    QTRY_VERIFY(m_settings->tagPaths(tag).isEmpty());
+    QTRY_VERIFY(!undo->isVisible());
+    // Removing the album chip from the keyboard leaves focus in the empty
+    // field, where Ctrl+Z is still the viewer's undo.
+    QQuickItem* albumChip = chip(QStringLiteral("organizationChip_album_Viewer album"));
+    QVERIFY(albumChip);
+    albumChip->forceActiveFocus(Qt::TabFocusReason);
+    QTest::keyClick(m_window, Qt::Key_Delete);
+    QTRY_VERIFY(m_settings->albumPaths(QStringLiteral("Viewer album")).isEmpty());
+    QTRY_VERIFY(undo->isVisible());
+    QTRY_VERIFY(item(QStringLiteral("tagFieldInput"))->hasActiveFocus());
+    QTest::keyClick(m_window, Qt::Key_Z, Qt::ControlModifier);
+    QTRY_COMPARE(m_settings->albumPaths(QStringLiteral("Viewer album")), QStringList{path});
+    // Escape from an empty field goes back to the picture.
+    item(QStringLiteral("tagFieldInput"))->forceActiveFocus();
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(item(QStringLiteral("viewerKeys"))->hasActiveFocus());
+    QTest::keyClick(m_window, Qt::Key_I);
+    QTRY_VERIFY(!item(QStringLiteral("viewerInfoPanel"))->isVisible());
+  }
+
   void slideshowRunsFullScreenAndEscapeEndsIt() {
     open({media(QStringLiteral("Shot 1.jpg"))});
     QTRY_COMPARE(m_session->count(), int(m_order.size()));

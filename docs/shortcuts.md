@@ -36,10 +36,11 @@ The viewer opens when you double-click a picture or video, or run
 | `Z` `X` | Show sidecar subtitles 0.5 seconds earlier · later, up to 10 seconds |
 | `F` · `F11` · double click a video | Full screen |
 | `F5` | Slideshow |
-| `I` | Details: size, date, rating, camera or codec |
+| `I` | Details: size, date, rating, albums and tags, camera or codec |
+| `Alt+T` with the details shown | Add a tag to the file; Delete on a chip removes it |
 | `B` | Hide or show the filmstrip |
 | `D` · `Shift+D` | Open a RAW in the preferred editor · choose an editor |
-| `V` · `Alt+1`-`Alt+5` · `Ctrl+Z` | Favourite · rate · undo the last mark or move to Trash |
+| `V` · `Alt+1`-`Alt+5` · `Ctrl+Z` | Favourite · rate · undo the last mark, album or tag change, or move to Trash |
 | `Ctrl+Shift+C` | Copy the opened path as plain text |
 | `?` · `F1` | Show or hide the grouped shortcut help |
 | `Y` · `S` · `A` | Copy · send · annotate |
@@ -112,8 +113,10 @@ the viewer. The preview is the built-in viewer inside the library.
 | `Shift+Del` | Delete the current file or checked files permanently |
 | `Q` · `B` | Crop, rotate, resize the open picture · correct the whole selection |
 | `K` | Compare the selection, or the open picture's copies |
-| `Ctrl+Z` | Undo the last favourite, hide, rating or caption change, or move to Trash |
+| `Ctrl+Z` | Undo the last favourite, hide, rating, caption, album or tag change, or move to Trash |
 | `Alt+C` in the library preview | Edit the caption; Enter saves and Escape cancels |
+| `Alt+T` in the library preview | Add a tag: Up and Down pick a suggestion, Tab takes it, Enter or a comma adds it, Escape clears then leaves |
+| `Delete` `Backspace` on a chip | Remove that album or tag from the file |
 | `1`-`8` · `Tab` `Shift+Tab` | Jump to a section · next · previous section; with the sidebar open, Tab moves between the grid and sidebar |
 | `↑` `↓` · `←` `→` · `Enter` in the sidebar | Move · collapse or expand · open the folder |
 | `Alt+1`-`Alt+5` · `Alt+0` | Rate · clear rating, in the grid or the viewer |

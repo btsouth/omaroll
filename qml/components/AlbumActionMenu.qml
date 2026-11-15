@@ -71,8 +71,8 @@ Popup {
         menu.x = Math.max(8, Math.min(point.x, host.contentItem.width - menu.width - 8))
         menu.y = point.y
         filter.text = ""
-        list.currentIndex = -1
         menu.open()
+        list.currentIndex = -1
         // Upward when the space below cannot hold it.
         if (menu.y + menu.height > host.contentItem.height - 8)
             menu.y = Math.max(8, Math.min(point.y, host.contentItem.height - 8) - menu.height)
@@ -105,6 +105,8 @@ Popup {
             return
         }
         const before = Settings.latestUndoId
+        // The rows are made again after each change; keep the place.
+        const keep = list.currentIndex
         let message
         if (row.create) {
             const result = row.kind === "album" ? Settings.createAlbumFor(row.name, paths)
@@ -134,6 +136,7 @@ Popup {
                 message = "Tagged " + menu.items(missing) + " as " + row.name
             }
         }
+        list.currentIndex = Math.min(keep, list.count - 1)
         const undoId = Settings.latestUndoId !== before ? Settings.latestUndoId : 0
         if (undoId > 0) host.sayUndoable(message, undoId)
         else host.say(Settings.organizationError || message)
@@ -145,9 +148,11 @@ Popup {
         if (event.key === Qt.Key_Down || event.key === Qt.Key_Up
                 || event.key === Qt.Key_Home || event.key === Qt.Key_End) {
             if (fromField && (event.key === Qt.Key_Home || event.key === Qt.Key_End)) return false
-            if (count === 0) return true
+            if (count === 0 || (fromField && event.key === Qt.Key_Up)) return true
             let next = list.currentIndex
-            if (event.key === Qt.Key_Down) next = Math.min(count - 1, next + 1)
+            // From the field, Down enters the list at the row Enter would take.
+            if (fromField) next = Math.max(0, next)
+            else if (event.key === Qt.Key_Down) next = Math.min(count - 1, next + 1)
             else if (event.key === Qt.Key_Up) next = next - 1
             else if (event.key === Qt.Key_Home) next = 0
             else next = count - 1
@@ -167,8 +172,10 @@ Popup {
         }
         if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter
                 || (!fromField && event.key === Qt.Key_Space)) {
-            const index = list.currentIndex >= 0 ? list.currentIndex
-                        : menu.typed !== "" && count > 0 ? 0 : -1
+            // From the field, Enter takes the first row once something is
+            // typed, so a new name is one key away.
+            const index = !fromField ? list.currentIndex
+                        : menu.typed !== "" && count > 0 ? Math.max(0, list.currentIndex) : -1
             if (index >= 0) menu.activate(index)
             return true
         }
@@ -227,7 +234,8 @@ Popup {
                 selectedTextColor: Theme.brightForeground
                 Accessible.role: Accessible.EditableText
                 Accessible.name: "Filter albums and tags, or name a new one"
-                onTextChanged: list.currentIndex = -1
+                // After the rows follow the text: the first row is what Enter takes.
+                onTextChanged: Qt.callLater(function () { list.currentIndex = menu.typed !== "" ? 0 : -1 })
                 Keys.onPressed: function (event) {
                     if (menu.handleKey(event, true)) event.accepted = true
                 }
