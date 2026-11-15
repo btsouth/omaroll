@@ -57,7 +57,11 @@ ToolTip {
     contentItem: Item {
         FontMetrics { id: tipMetrics; font: tip.font }
         readonly property real keyRoom: keyCap.visible ? keyCap.width + 10 : 0
-        implicitWidth: Math.min(tipText.implicitWidth,
+        // With a line limit the text elides to its width, so its own
+        // implicit width would follow the width set from it: measure the
+        // text on one line instead.
+        implicitWidth: Math.min(tip.maximumLines > 0 ? Math.ceil(tipMetrics.advanceWidth(tip.text)) + 1
+                                                     : tipText.implicitWidth,
                                 tip.maximumWidth - tip.leftPadding - tip.rightPadding - keyRoom) + keyRoom
         implicitHeight: Math.max(tipText.implicitHeight, keyCap.visible ? keyCap.height : 0)
         Text {

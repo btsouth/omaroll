@@ -10482,6 +10482,8 @@ private slots:
     const QStringList before = m_settings->sidebarSections();
     QVERIFY(m_settings->createTag(QStringLiteral("Focusz/Inner")));
     const auto cleanup = qScopeGuard([&] {
+      // Years are opened per session; close the one opened here.
+      item("sidebarCollectionsPane")->setProperty("openYears", QVariantMap());
       m_settings->deleteTag(QStringLiteral("Focusz"));
       m_settings->clearUndoHistory();
       m_settings->setSidebarSections(before);

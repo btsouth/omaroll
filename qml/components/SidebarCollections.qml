@@ -367,15 +367,30 @@ FocusScope {
         const rowBottom = offsets[index + 1]
         const extent = Math.max(0, rowsHeight - list.height)
         const start = root.exactViewTop()
-        let top = start
-        for (let pass = 0; pass < 2; ++pass) {
-            const pins = pinnedAt(top)
-            const cover = pins.top === index ? 0 : pins.topCover
-            if (rowTop < top + cover) top = rows[index].kind === "header" ? rowTop : rowTop - root.headerHeight
-            const after = pinnedAt(top)
-            const below = after.bottom.indexOf(index) >= 0 ? 0 : after.bottomCover
-            if (rowBottom > top + list.height - below) top = rowBottom - list.height + below
-            top = Math.max(0, Math.min(extent, top))
+        // Where the row would sit clear of the stuck headers that a scroll
+        // position brings: the row edges, and those edges moved by a header
+        // or several, are the only places worth trying. The nearest that
+        // fits wins; with none (a pane shorter than the row), the row's top.
+        const fits = function (top) {
+            const pins = root.pinnedAt(top)
+            const above = pins.top === index ? 0 : Math.max(0, pins.topCover)
+            const below = pins.bottom.indexOf(index) >= 0 ? 0 : pins.bottomCover
+            return rowTop >= top + above - 0.5 && rowBottom <= top + list.height - below + 0.5
+        }
+        const clamp = function (top) { return Math.max(0, Math.min(extent, top)) }
+        let top = clamp(start)
+        if (!fits(top)) {
+            const candidates = []
+            for (let k = 0; k <= root.headerIndices.length; ++k) {
+                candidates.push(clamp(rowTop - k * root.headerHeight))
+                candidates.push(clamp(rowBottom - list.height + k * root.headerHeight))
+            }
+            let best = -1
+            for (const candidate of candidates) {
+                if (fits(candidate) && (best < 0 || Math.abs(candidate - start) < Math.abs(best - start)))
+                    best = candidate
+            }
+            top = best >= 0 ? best : clamp(rowTop)
         }
         if (Math.abs(top - start) > 0.5) list.contentY += top - start
     }
