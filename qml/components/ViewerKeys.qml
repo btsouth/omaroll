@@ -9,7 +9,8 @@ Item {
     // Enter, Space or Escape held after answering the resume prompt: its
     // repeats are dropped, and letting it go or a new key ends that.
     function promptKey(event) {
-        return [Qt.Key_Return, Qt.Key_Enter, Qt.Key_Space, Qt.Key_Escape].indexOf(event.key) >= 0
+        return [ShortcutCatalog.quickKeys.Return, ShortcutCatalog.quickKeys.Enter, ShortcutCatalog.quickKeys.Space,
+                ShortcutCatalog.quickKeys.Escape].indexOf(event.key) >= 0
     }
     Keys.onReleased: function (event) {
         if (viewer.promptKeyHeld && promptKey(event) && !event.isAutoRepeat) {
