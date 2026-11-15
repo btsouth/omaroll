@@ -19,22 +19,26 @@ inline QString normalized(const QString& name) {
   return segments.join(QLatin1Char('/')).left(80);
 }
 
-// Natural order ignoring case: runs of digits compare as numbers, so
-// "Tag 2" sorts before "Tag 10". Ties fall back to the plain comparison.
+// Natural order ignoring case: runs of ASCII digits compare as numbers, so
+// "Tag 2" sorts before "Tag 10". Only '0' to '9' make a number: other
+// scripts' digits compare as characters, which keeps the order consistent
+// (a digit run sorts where its first digit's character would). Ties fall
+// back to the plain comparison.
+inline bool isAsciiDigit(QChar c) { return c.unicode() >= u'0' && c.unicode() <= u'9'; }
 inline int naturalCompare(QStringView a, QStringView b) {
   qsizetype i = 0, j = 0;
   while (i < a.size() && j < b.size()) {
-    if (a.at(i).isDigit() && b.at(j).isDigit()) {
+    if (isAsciiDigit(a.at(i)) && isAsciiDigit(b.at(j))) {
       qsizetype endA = i, endB = j;
-      while (endA < a.size() && a.at(endA).isDigit()) ++endA;
-      while (endB < b.size() && b.at(endB).isDigit()) ++endB;
+      while (endA < a.size() && isAsciiDigit(a.at(endA))) ++endA;
+      while (endB < b.size() && isAsciiDigit(b.at(endB))) ++endB;
       // Leading zeros do not make a number larger.
       qsizetype startA = i, startB = j;
-      while (startA + 1 < endA && a.at(startA).digitValue() == 0) ++startA;
-      while (startB + 1 < endB && b.at(startB).digitValue() == 0) ++startB;
+      while (startA + 1 < endA && a.at(startA) == u'0') ++startA;
+      while (startB + 1 < endB && b.at(startB) == u'0') ++startB;
       if (endA - startA != endB - startB) return endA - startA < endB - startB ? -1 : 1;
       for (qsizetype k = 0; k < endA - startA; ++k) {
-        const int da = a.at(startA + k).digitValue(), db = b.at(startB + k).digitValue();
+        const char16_t da = a.at(startA + k).unicode(), db = b.at(startB + k).unicode();
         if (da != db) return da < db ? -1 : 1;
       }
       i = endA;

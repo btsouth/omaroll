@@ -16916,6 +16916,40 @@ private slots:
     QVERIFY(TagNames::naturalCompare(u"a007", u"a7") != 0);
     QVERIFY(TagNames::naturalCompare(u"x9", u"x10") < 0);
     QVERIFY(TagNames::naturalCompare(u"x", u"x1") < 0);
+    // Saved views list the same way.
+    for (const char* name : {"View 10", "view 9", "View 1"})
+      QVERIFY(settings.saveSmartCollection(QString::fromUtf8(name), {{QStringLiteral("kind"), 0}}));
+    QCOMPARE(settings.smartCollectionNames(),
+             QStringList({QStringLiteral("View 1"), QStringLiteral("view 9"), QStringLiteral("View 10")}));
+
+    // A strict weak ordering over a tricky mixed set, so std::sort stays
+    // sound: other scripts' digits, punctuation between '9' and 'A', case,
+    // leading zeros and prefixes.
+    const QStringList tricky{QStringLiteral("x5"), QStringLiteral("x:"), QString::fromUtf8("x٣"),
+                             QStringLiteral("x10"), QStringLiteral("x05"), QStringLiteral("x5a"),
+                             QStringLiteral("X5"), QStringLiteral("x"), QString::fromUtf8("x٢"),
+                             QStringLiteral("a"), QStringLiteral("10"), QString::fromUtf8("٢"),
+                             QStringLiteral("Tag 2"), QStringLiteral("tag 02"), QStringLiteral("Tag 10"),
+                             QStringLiteral("x05a"), QStringLiteral("x5b"), QStringLiteral("x0"),
+                             QStringLiteral("x00"), QString::fromUtf8("ｘ5")};
+    const auto less = [](const QString& a, const QString& b) { return TagNames::naturalCompare(a, b) < 0; };
+    const auto same = [&](const QString& a, const QString& b) { return !less(a, b) && !less(b, a); };
+    for (const QString& a : tricky) {
+      QVERIFY2(!less(a, a), qPrintable(a));
+      for (const QString& b : tricky) {
+        QVERIFY2(!(less(a, b) && less(b, a)), qPrintable(a + QStringLiteral(" / ") + b));
+        QCOMPARE(TagNames::naturalCompare(a, b) < 0, TagNames::naturalCompare(b, a) > 0);
+        for (const QString& c : tricky) {
+          if (less(a, b) && less(b, c)) QVERIFY2(less(a, c), qPrintable(a + QStringLiteral(" < ") + b + QStringLiteral(" < ") + c));
+          if (same(a, b) && same(b, c)) QVERIFY(same(a, c));
+        }
+      }
+    }
+    QStringList sorted = tricky;
+    std::sort(sorted.begin(), sorted.end(), less);
+    QVERIFY(std::is_sorted(sorted.begin(), sorted.end(), less));
+    QVERIFY(less(QStringLiteral("x5"), QStringLiteral("x10")));
+    QVERIFY(less(QStringLiteral("x5"), QStringLiteral("x:")));
   }
 
   void everyAlbumAndTagChangeIsOneUndoStep() {

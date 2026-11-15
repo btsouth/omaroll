@@ -404,8 +404,11 @@ private:
   void reloadOrganization();
   // What emptyReason() may leave out when asking whether anything matches.
   enum Relax { RelaxNothing = 0, RelaxSearch = 1, RelaxRefinements = 2 };
+  // datedBy: the file whose dates stand for this one, for a file folded
+  // into its RAW/JPEG partner's tile.
   [[nodiscard]] bool matchesFilters(int sourceRow, const CaptureRecord& record,
-                                    int relax = RelaxNothing) const;
+                                    int relax = RelaxNothing,
+                                    const CaptureRecord* datedBy = nullptr) const;
   [[nodiscard]] bool anyMatches(int relax) const;
   [[nodiscard]] bool matchesSearch(int sourceRow, const CaptureRecord& record) const;
   [[nodiscard]] const SearchKeys& searchKeys(int sourceRow, const CaptureRecord& record) const;
@@ -419,7 +422,7 @@ private:
   void reloadLibraryRoots();
   [[nodiscard]] bool rebuildFolderIndex();
   [[nodiscard]] bool rebuildDateIndex();
-  [[nodiscard]] const CaptureRecord* pairedRaw(const CaptureRecord& record) const;
+  [[nodiscard]] QHash<QString, int> pairPartners() const;
   [[nodiscard]] bool rebuildCameraIndex();
   void rebuildDuplicateOrdinals();
   void rebuildLoneReviewPaths();

@@ -84,6 +84,7 @@ Item {
         // Inside the tile, over its own info strip, so it never covers the
         // section header above or the tiles around it.
         widthLimit: Math.max(40, root.width - 12)
+        heightLimit: Math.max(20, root.height - 12)
         x: 6
         y: Math.max(6, root.height - implicitHeight - 6)
     }

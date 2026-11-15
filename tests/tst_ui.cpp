@@ -3222,6 +3222,25 @@ private slots:
     QVERIFY(size->isVisible());
   }
 
+  // A very long name keeps its tip inside a small tile, cut short.
+  void filenameTipFitsASmallTile() {
+    QQmlComponent component(m_engine);
+    component.setData(R"QML(
+      import QtQuick
+      import Omaroll
+      CaptureCard { width: 140; height: 90 }
+    )QML", QUrl());
+    std::unique_ptr<QObject> object(component.create());
+    QVERIFY2(object, qPrintable(component.errorString()));
+    object->setProperty("fileName", QStringLiteral("a very long file name ").repeated(10) + QStringLiteral(".jpg"));
+    QObject* tip = object->findChild<QObject*>(QStringLiteral("captureFilenameTip"));
+    QVERIFY(tip);
+    QVERIFY(tip->property("maximumLines").toInt() >= 1);
+    QVERIFY2(tip->property("implicitHeight").toReal() <= 90 - 12 + 0.5,
+             qPrintable(QString::number(tip->property("implicitHeight").toReal())));
+    QVERIFY(tip->property("implicitWidth").toReal() <= 140 - 12 + 0.5);
+  }
+
   void failedTrashTargetsRemainChecked() {
     QTemporaryDir dir;
     const QString good = dir.filePath(QStringLiteral("trash-good.png"));
@@ -10360,6 +10379,122 @@ private slots:
     QTest::keyClick(m_window, Qt::Key_Right);
     QTRY_VERIFY(m_settings->sidebarSections().contains(QStringLiteral("dates")));
     QTRY_VERIFY(collectionDelegate(collectionIndex("header", "dates"))->property("current").toBool());
+  }
+
+  // In a short pane the stuck headers give way before they would cover
+  // the last row that shows: some row always has its height, and any row
+  // can be scrolled into view clear of them.
+  void sidebarStuckHeadersLeaveRoomInAShortPane() {
+    const QStringList before = m_settings->sidebarSections();
+    const QString album = QStringLiteral("Short pane");
+    QVERIFY(m_settings->createAlbum(album));
+    QVERIFY(m_settings->addToAlbum(album, {pathAt(0)}));
+    for (int at = 1; at <= 30; ++at) QVERIFY(m_settings->createTag(QStringLiteral("Shortz/T%1").arg(at)));
+    const QStringList pins = m_settings->pinnedFolders();
+    const QString folder = QFileInfo(pathAt(0)).absolutePath();
+    const bool pinned = m_settings->pinFolderPath(folder);
+    const QSize size = m_window->size();
+    const auto cleanup = qScopeGuard([&] {
+      if (pinned) m_settings->unpinFolder(folder);
+      m_settings->deleteAlbum(album);
+      m_settings->deleteTag(QStringLiteral("Shortz"));
+      m_settings->clearUndoHistory();
+      m_settings->setSidebarSections(before);
+      m_settings->setShowFolderSidebar(false);
+      m_window->resize(size);
+      waitForLayout(size);
+      item("library")->forceActiveFocus();
+    });
+    m_settings->setSidebarSections({"albums", "tags", "dates", "folders"});
+    m_settings->setShowFolderSidebar(true);
+    QQuickItem* pane = item("sidebarCollectionsPane");
+    QQuickItem* list = item("sidebarCollections");
+    QQuickItem* clip = item("collectionRowsClip");
+    QTRY_VERIFY(collectionIndex("tag", "Shortz/T30") > 0);
+    const auto check = [&](int height) {
+      m_window->resize(780, height);
+      waitForLayout(QSize(780, height));
+      QVERIFY(QQuickTest::qWaitForPolish(m_window));
+      const qreal listHeight = list->height();
+      const qreal extent = qMax<qreal>(0, pane->property("rowsHeight").toReal() - listHeight);
+      for (qreal top = 0; top <= extent + 1; top += 13) {
+        QVariant pins;
+        QMetaObject::invokeMethod(pane, "pinnedAt", Q_RETURN_ARG(QVariant, pins), Q_ARG(QVariant, top));
+        const QVariantMap map = pins.value<QJSValue>().toVariant().toMap();
+        const qreal covered = map.value("topCover").toReal() + map.value("bottomCover").toReal();
+        if (listHeight >= 42) {
+          QVERIFY2(listHeight - covered >= 42 - 0.5,
+                   qPrintable(QStringLiteral("height %1 top %2 covered %3 of %4")
+                                  .arg(height).arg(top).arg(covered).arg(listHeight)));
+        } else {
+          QCOMPARE(covered, 0.0);
+        }
+      }
+      // Every section header, and the last row, comes into view clear of
+      // the stuck headers.
+      list->forceActiveFocus();
+      const QVariantList rows = collectionRows();
+      for (const int index : {collectionIndex("header", "albums"), collectionIndex("album", album),
+                              collectionIndex("header", "tags"), collectionIndex("tag", "Shortz/T15"),
+                              collectionIndex("header", "dates"), int(rows.size()) - 1}) {
+        QMetaObject::invokeMethod(pane, "moveTo", Q_ARG(QVariant, index));
+        QVERIFY(QQuickTest::qWaitForPolish(m_window));
+        QQuickItem* row = nullptr;
+        QTRY_VERIFY((row = [&] {
+          QQuickItem* found = nullptr;
+          QMetaObject::invokeMethod(list, "itemAtIndex", Q_RETURN_ARG(QQuickItem*, found), Q_ARG(int, index));
+          return found;
+        }()) != nullptr);
+        if (clip->height() < row->height()) continue;
+        const qreal y = row->mapToItem(clip, QPointF(0, 0)).y();
+        QVERIFY2(y >= -0.5 && y + row->height() <= clip->height() + 0.5,
+                 qPrintable(QStringLiteral("height %1 row %2 at %3 in %4").arg(height).arg(index).arg(y).arg(clip->height())));
+      }
+    };
+    check(420);
+    check(520);
+    check(820);
+  }
+
+  // A rename's row that is not there to focus does not leave a jump
+  // pending for a later rebuild; one under a collapsed section is opened.
+  void sidebarFocusRowDropsARowThatIsNotThere() {
+    const QStringList before = m_settings->sidebarSections();
+    QVERIFY(m_settings->createTag(QStringLiteral("Focusz/Inner")));
+    const auto cleanup = qScopeGuard([&] {
+      m_settings->deleteTag(QStringLiteral("Focusz"));
+      m_settings->clearUndoHistory();
+      m_settings->setSidebarSections(before);
+      m_settings->setShowFolderSidebar(false);
+      item("library")->forceActiveFocus();
+    });
+    m_settings->setSidebarSections({"tags", "dates", "folders"});
+    m_settings->setShowFolderSidebar(true);
+    QQuickItem* pane = item("sidebarCollectionsPane");
+    QQuickItem* list = item("sidebarCollections");
+    QTRY_VERIFY(collectionIndex("tag", "Focusz/Inner") > 0);
+    QTest::qWait(250);
+    QMetaObject::invokeMethod(pane, "moveTo", Q_ARG(QVariant, 0));
+    QTRY_COMPARE(list->property("currentIndex").toInt(), 0);
+    QMetaObject::invokeMethod(pane, "focusRow", Q_ARG(QVariant, QStringLiteral("tag")),
+                              Q_ARG(QVariant, QStringLiteral("Nowhere/At all")));
+    QVERIFY(!pane->property("revealPending").toBool());
+    QCOMPARE(list->property("currentIndex").toInt(), 0);
+    // An unrelated rebuild leaves the current row alone.
+    const int year = collectionIndex("header", "dates") + 1;
+    QMetaObject::invokeMethod(pane, "setYearOpen", Q_ARG(QVariant, collectionRows().at(year).toMap().value("name")),
+                              Q_ARG(QVariant, true));
+    QTRY_VERIFY(collectionRows().size() > year + 1);
+    QCOMPARE(list->property("currentIndex").toInt(), 0);
+    QCOMPARE(pane->property("currentKey").toString(), QStringLiteral("header:tags"));
+    // Under a collapsed Tags section the row is opened to.
+    m_settings->setSidebarSections({"dates", "folders"});
+    QTRY_COMPARE(collectionIndex("tag", "Focusz/Inner"), -1);
+    QMetaObject::invokeMethod(pane, "focusRow", Q_ARG(QVariant, QStringLiteral("tag")),
+                              Q_ARG(QVariant, QStringLiteral("Focusz/Inner")));
+    QTRY_VERIFY(m_settings->sidebarSections().contains(QStringLiteral("tags")));
+    QTRY_COMPARE(list->property("currentIndex").toInt(), collectionIndex("tag", "Focusz/Inner"));
+    QVERIFY(list->hasActiveFocus());
   }
 
   // Renaming an album or tag from its row's menu gives the keyboard back to

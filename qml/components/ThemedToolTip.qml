@@ -42,13 +42,20 @@ ToolTip {
     // Long tips wrap rather than run across the window, and never wider
     // than the window itself allows.
     readonly property real windowWidth: owner && owner.Window.window ? owner.Window.width : 0
-    // An owner can keep the tip inside itself, as a tile does.
+    // An owner can keep the tip inside itself, as a tile does: no wider
+    // than widthLimit and no taller than heightLimit, the text elided at
+    // the last line that fits.
     property real widthLimit: 0
+    property real heightLimit: 0
+    readonly property int maximumLines: heightLimit > 0
+        ? Math.max(1, Math.floor((heightLimit - topPadding - bottomPadding) / tipMetrics.height))
+        : 0
     readonly property real maximumWidth: {
         const limit = windowWidth > 0 ? Math.max(120, Math.min(420, windowWidth - 24)) : 420
         return widthLimit > 0 ? Math.min(limit, widthLimit) : limit
     }
     contentItem: Item {
+        FontMetrics { id: tipMetrics; font: tip.font }
         readonly property real keyRoom: keyCap.visible ? keyCap.width + 10 : 0
         implicitWidth: Math.min(tipText.implicitWidth,
                                 tip.maximumWidth - tip.leftPadding - tip.rightPadding - keyRoom) + keyRoom
@@ -64,6 +71,8 @@ ToolTip {
             // At spaces first; a long file name with none breaks where it
             // must rather than run out of the box.
             wrapMode: Text.Wrap
+            maximumLineCount: tip.maximumLines > 0 ? tip.maximumLines : 2147483647
+            elide: tip.maximumLines > 0 ? Text.ElideRight : Text.ElideNone
         }
         Rectangle {
             id: keyCap

@@ -49,6 +49,10 @@
   viewer.
 - Deleting a tag that has tags nested under it says how many went with it,
   as in "Deleted tag Travel and 2 nested tags".
+- A RAW+JPEG pair shown as one tile now counts once and is dated by the
+  file the tile shows, usually the RAW, in date filters, saved views, Browse
+  and Jump to date. When the two files' dates differed, the JPEG used to be
+  counted and filtered by its own date as well.
 
 ### Fixed
 
