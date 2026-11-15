@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Window
 import QtQuick.Controls.Basic
+import QtQuick.Effects
 
 // Albums, tags and dates above the folder tree, as one recycling list of
 // flattened rows: a framed header per section, then its albums with a cover,
@@ -9,6 +10,12 @@ import QtQuick.Controls.Basic
 // A row narrows the library the way Browse does, so it combines with the
 // folder, search and other facets; the active row is highlighted, and
 // choosing it again clears that facet. Which sections are open is saved.
+//
+// Section headers stay in reach however long a section is: the header of
+// the section being scrolled through sticks to the top, where a click
+// collapses it, and the headers of the sections below stick to the bottom,
+// where a click goes to them. Ctrl+Up and Ctrl+Down move between headers
+// and Ctrl+Left collapses the current section from any of its rows.
 FocusScope {
     id: root
 
@@ -40,13 +47,37 @@ FocusScope {
     // From the rows rather than the list's contentHeight, which it estimates
     // from its own height and so would loop back into this.
     function rowHeight(kind) { return kind === "header" ? 36 : kind === "album" ? 42 : 32 }
-    readonly property real rowsHeight: {
+    readonly property int headerHeight: 36
+    // Where each row starts, and one more entry for the end.
+    readonly property var offsets: {
+        const out = [0]
         let total = 0
-        for (const row of rows) total += rowHeight(row.kind)
-        return total
+        for (const row of rows) {
+            total += rowHeight(row.kind)
+            out.push(total)
+        }
+        return out
     }
-    implicitHeight: Math.min(rowsHeight, maximumHeight)
+    readonly property real rowsHeight: offsets[offsets.length - 1]
+    // Whole rows only: the list ends on a row's edge rather than cutting
+    // the last one it shows through its text.
+    function fittedHeight(limit) {
+        if (rowsHeight <= limit) return rowsHeight
+        let fitted = 0
+        for (let i = 1; i < offsets.length && offsets[i] <= limit; ++i) fitted = offsets[i]
+        return fitted
+    }
+    implicitHeight: fittedHeight(maximumHeight)
     visible: rows.length > 0
+    // The scroll bar has a gutter of its own beside the rows, so it never
+    // crosses a header's frame or the keyboard ring.
+    readonly property bool overflowing: rowsHeight > list.height + 0.5
+    readonly property real gutter: overflowing ? 10 : 0
+    // The keyboard ring shows while the keyboard is in use; a click on a
+    // row or header does not leave one behind.
+    readonly property bool keyboardShown: !root.Window.window || root.Window.window.keyboardNavigation !== false
+    function keyboardUsed() { if (root.Window.window) root.Window.window.keyboardNavigation = true }
+    function pointerUsed() { if (root.Window.window) root.Window.window.keyboardNavigation = false }
 
     function shade(base, amount) { return Qt.rgba(base.r, base.g, base.b, amount) }
     function items(count) { return count === 1 ? "1 item" : count + " items" }
@@ -187,7 +218,16 @@ FocusScope {
             list.contentY = Math.max(list.originY, Math.min(end, list.contentY + topOffset))
         }
         root.restoring = false
-        root.currentKey = root.keyOf(root.rows[list.currentIndex])
+        if (root.revealPending && index >= 0) {
+            root.revealPending = false
+            list.forceLayout()
+            root.reveal(index)
+        }
+        // The row asked for is not among these rows, and no rebuild that
+        // could bring it is on its way: drop the request, so a later,
+        // unrelated rebuild does not jump there.
+        if (root.revealPending && index < 0 && !organizationChanges.running) root.revealPending = false
+        if (!root.revealPending) root.currentKey = root.keyOf(root.rows[list.currentIndex])
         root.modelResets++
     }
     onRowsChanged: applyRows()
@@ -234,18 +274,18 @@ FocusScope {
 
     function focusFirst() {
         list.currentIndex = 0
-        list.positionViewAtIndex(0, ListView.Contain)
+        root.reveal(0)
         list.forceActiveFocus()
     }
     function focusLast() {
         list.currentIndex = rows.length - 1
-        list.positionViewAtIndex(list.currentIndex, ListView.Contain)
+        root.reveal(list.currentIndex)
         list.forceActiveFocus()
     }
     function moveTo(index) {
         if (index < 0 || index >= rows.length) return
         list.currentIndex = index
-        list.positionViewAtIndex(index, ListView.Contain)
+        root.reveal(index)
     }
     // The row a child sits under: a tag's parent tag, a month's year, or
     // the section header.
@@ -260,6 +300,152 @@ FocusScope {
         }
         return -1
     }
+    // Header rows, in order.
+    readonly property var headerIndices: {
+        const out = []
+        for (let i = 0; i < rows.length; ++i) if (rows[i].kind === "header") out.push(i)
+        return out
+    }
+    // The header of the section a row is in.
+    function sectionHeaderOf(index) {
+        let found = -1
+        for (const header of headerIndices) {
+            if (header > index) break
+            found = header
+        }
+        return found
+    }
+    // Which headers stick, for the list scrolled to top: the header of the
+    // section being looked through when its own row is above the view, and
+    // the headers below the view, stacked at the bottom.
+    function pinnedAt(top) {
+        const height = list.height
+        const bottom = []
+        let edge = top + height
+        for (let k = headerIndices.length - 1; k >= 0; --k) {
+            const header = headerIndices[k]
+            if (offsets[header] + root.headerHeight <= edge + 0.5) break
+            bottom.unshift(header)
+            edge -= root.headerHeight
+        }
+        let above = -1
+        for (const header of headerIndices) {
+            if (offsets[header] < top - 0.5 && bottom.indexOf(header) < 0) above = header
+        }
+        // Stuck headers never take the room of the last row that would
+        // show: in a short pane they give way, the farthest first, then
+        // the top one, so a row (even an album's) always has its height.
+        // A header in its own place at the top takes that slot as a stuck
+        // one would, so the row under it has room too.
+        const room = Math.max(0, Math.floor((height - root.rowHeight("album")) / root.headerHeight))
+        if (above >= 0 && room < 1) above = -1
+        const topHeld = above >= 0 || headerIndices.some(function (header) {
+            return offsets[header] <= top + 0.5 && offsets[header] + root.headerHeight > top + 0.5
+        })
+        const keep = Math.max(0, room - (topHeld ? 1 : 0))
+        if (bottom.length > keep) bottom.length = keep
+        // Pushed up by the next header as it arrives.
+        let shift = 0
+        if (above >= 0) {
+            const next = headerIndices[headerIndices.indexOf(above) + 1]
+            if (next !== undefined) shift = Math.min(0, offsets[next] - top - root.headerHeight)
+        }
+        return {top: above, shift: shift, bottom: bottom,
+                topCover: above >= 0 ? root.headerHeight + shift : 0,
+                bottomCover: bottom.length * root.headerHeight}
+    }
+    // How far the view is scrolled, measured from a row on screen: the
+    // list's own origin is an estimate while rows above are unseen.
+    function exactViewTop() {
+        const at = list.indexAt(1, list.contentY + 1)
+        const item = at >= 0 ? list.itemAtIndex(at) : null
+        return item && at < root.offsets.length ? root.offsets[at] + list.contentY - item.y
+                                                : list.contentY - list.originY
+    }
+    readonly property real viewTop: { void list.contentY; void list.originY; void list.count; return exactViewTop() }
+    readonly property var pinned: { void list.height; return pinnedAt(root.viewTop) }
+    // Scrolls just enough that a row is in view and clear of the stuck
+    // headers.
+    function reveal(index) {
+        if (index < 0 || index >= rows.length) return
+        list.positionViewAtIndex(index, ListView.Contain)
+        const rowTop = offsets[index]
+        const rowBottom = offsets[index + 1]
+        const extent = Math.max(0, rowsHeight - list.height)
+        const start = root.exactViewTop()
+        // Where the row would sit clear of the stuck headers that a scroll
+        // position brings: the row edges, and those edges moved by a header
+        // or several, are the only places worth trying. The nearest that
+        // fits wins; with none (a pane shorter than the row), the row's top.
+        const fits = function (top) {
+            const pins = root.pinnedAt(top)
+            const above = pins.top === index ? 0 : Math.max(0, pins.topCover)
+            const below = pins.bottom.indexOf(index) >= 0 ? 0 : pins.bottomCover
+            return rowTop >= top + above - 0.5 && rowBottom <= top + list.height - below + 0.5
+        }
+        const clamp = function (top) { return Math.max(0, Math.min(extent, top)) }
+        let top = clamp(start)
+        if (!fits(top)) {
+            const candidates = []
+            for (let k = 0; k <= root.headerIndices.length; ++k) {
+                candidates.push(clamp(rowTop - k * root.headerHeight))
+                candidates.push(clamp(rowBottom - list.height + k * root.headerHeight))
+            }
+            let best = -1
+            for (const candidate of candidates) {
+                if (fits(candidate) && (best < 0 || Math.abs(candidate - start) < Math.abs(best - start)))
+                    best = candidate
+            }
+            top = best >= 0 ? best : clamp(rowTop)
+        }
+        if (Math.abs(top - start) > 0.5) list.contentY += top - start
+    }
+    // A stuck header was clicked: collapse the section it heads when it is
+    // the one at the top, or go to it when it is below.
+    function pinnedHeaderClicked(index) {
+        const row = rows[index]
+        if (!row) return
+        const section = row.section
+        const atTop = root.pinned.top === index
+        if (atTop) root.setOpen(section, false)
+        else if (!row.open) root.setOpen(section, true)
+        const at = root.indexOfKey("header:" + section)
+        list.currentIndex = at
+        list.forceActiveFocus()
+        list.forceLayout()
+        if (atTop) root.reveal(at)
+        else list.positionViewAtIndex(at, ListView.Beginning)
+    }
+    function stepSection(index, step) {
+        const header = root.sectionHeaderOf(index)
+        const at = root.headerIndices.indexOf(header)
+        if (step < 0 && header >= 0 && header < index) return header
+        const next = root.headerIndices[at + step]
+        return next === undefined ? -1 : next
+    }
+    // Focus a row by kind and name once it is there, as after a rename,
+    // whose new row comes with the next rebuild.
+    function focusRow(kind, name) {
+        root.currentKey = kind + ":" + name
+        root.revealPending = true
+        // Under a collapsed section, open it once to reach the row.
+        const section = kind === "album" ? "albums" : kind === "tag" ? "tags" : "dates"
+        if (root.indexOfKey(root.currentKey) < 0 && !root.isOpen(section)) root.setOpen(section, true)
+        const index = root.indexOfKey(root.currentKey)
+        if (index >= 0) {
+            list.currentIndex = index
+            root.revealPending = false
+            list.forceLayout()
+            root.reveal(index)
+        } else if (!organizationChanges.running) {
+            // Not there, and no rebuild is coming to bring it.
+            root.revealPending = false
+            root.currentKey = root.keyOf(root.rows[list.currentIndex])
+        }
+        list.forceActiveFocus()
+    }
+    property bool revealPending: false
+
     function openMenu(index, item, x, y) {
         const row = rows[index]
         if (!row || (row.kind !== "album" && row.kind !== "tag")) return
@@ -269,244 +455,364 @@ FocusScope {
         rowMenu.popup(item, x, y)
     }
 
-    ListView {
-        id: list
-        objectName: "sidebarCollections"
-        anchors.fill: parent
+    // The rows show only between the stuck headers, so the headers need no
+    // backing of their own and look the same as the headers in the list:
+    // nothing scrolls under them to show through.
+    Item {
+        id: rowsClip
+        objectName: "collectionRowsClip"
+        x: 0
+        width: root.width
+        y: Math.max(0, root.pinned.topCover)
+        height: Math.max(0, root.height - y - root.pinned.bottomCover)
         clip: true
-        focus: true
-        activeFocusOnTab: root.keyboardReachable
-        boundsBehavior: Flickable.StopAtBounds
-        highlightMoveDuration: 0
-        currentIndex: -1
-        keyNavigationEnabled: false
-        reuseItems: true
-        Accessible.role: Accessible.List
-        Accessible.name: "Collections"
-        onCurrentIndexChanged: if (!root.restoring) root.currentKey = root.keyOf(root.rows[currentIndex])
-        onActiveFocusChanged: if (activeFocus && currentIndex < 0 && count > 0) currentIndex = 0
-        ScrollBar.vertical: ScrollBar {
-            policy: ScrollBar.AsNeeded
-            contentItem: Rectangle {
-                visible: parent.size < 1
-                implicitWidth: 4
-                radius: width / 2
-                color: root.shade(Theme.foreground, 0.32)
-            }
-            background: Rectangle { color: "transparent" }
-        }
-
-        Keys.onPressed: function (event) {
-            const index = currentIndex < 0 ? 0 : currentIndex
-            const row = root.rows[index]
-            if (!row) return
-            if (event.key === Qt.Key_Down) {
-                if (index + 1 < root.rows.length) root.moveTo(index + 1)
-                else root.exitDown()
-            } else if (event.key === Qt.Key_Up) {
-                if (index > 0) root.moveTo(index - 1)
-                else root.exitUp()
-            } else if (event.key === Qt.Key_Home) {
-                root.moveTo(0)
-            } else if (event.key === Qt.Key_End) {
-                root.moveTo(root.rows.length - 1)
-            } else if (event.key === Qt.Key_Right) {
-                if (row.kind === "header" && !row.open) root.setOpen(row.section, true)
-                else if (row.kind === "year" && !row.open) root.setYearOpen(row.name, true)
-                else if ((row.kind === "header" || row.kind === "year")
-                         && index + 1 < root.rows.length && root.parentIndex(index + 1) === index)
-                    root.moveTo(index + 1)
-            } else if (event.key === Qt.Key_Left) {
-                if (row.kind === "header" && row.open) root.setOpen(row.section, false)
-                else if (row.kind === "year" && row.open) root.setYearOpen(row.name, false)
-                else root.moveTo(root.parentIndex(index))
-            } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter
-                       || event.key === Qt.Key_Space) {
-                root.activate(index)
-            } else if (event.key === Qt.Key_Menu
-                       || (event.key === Qt.Key_F10 && (event.modifiers & Qt.ShiftModifier))) {
-                const item = itemAtIndex(index)
-                if (item) root.openMenu(index, item, 8, item.height)
-            } else {
-                return
-            }
-            event.accepted = true
-        }
-
-        delegate: Item {
-            id: rowItem
-            required property int index
-            required property var modelData
-            readonly property string kind: modelData.kind
-            readonly property bool current: ListView.isCurrentItem && list.activeFocus
-            readonly property bool active: { void Captures.albumFilter; void Captures.tagFilter
-                                             void Captures.dateFrom; void Captures.dateTo
-                                             return root.isActive(modelData) }
-            width: list.width
-            height: root.rowHeight(kind)
-            // Albums read their paths once per change, for the count and cover.
-            readonly property var albumPaths: {
-                void root.detailRevision
-                return kind === "album" ? Settings.albumPaths(modelData.name) : []
-            }
-            readonly property int count: {
-                void root.detailRevision
-                return kind === "album" ? albumPaths.length
-                     : kind === "tag" ? Settings.tagItemCount(modelData.name)
-                     : modelData.count !== undefined ? modelData.count : -1
-            }
-
-            SidebarHeader {
-                visible: rowItem.kind === "header"
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.bottom: parent.bottom
-                anchors.bottomMargin: 2
-                height: 28
-                label: rowItem.modelData.label
-                count: rowItem.kind === "header" ? rowItem.modelData.count : -1
-                expanded: rowItem.modelData.open === true
-                keyboardCurrent: rowItem.current
-                Accessible.ignored: !visible
-                onToggled: {
-                    // The row first, so taking the keyboard does not
-                    // scroll the list to its top row.
-                    list.currentIndex = rowItem.index
-                    list.forceActiveFocus()
-                    root.activate(rowItem.index)
+        ListView {
+            id: list
+            objectName: "sidebarCollections"
+            x: 0
+            y: -rowsClip.y
+            width: root.width
+            height: root.height
+            clip: true
+            Accessible.description: "Ctrl+Up and Ctrl+Down go to the previous or next section, Ctrl+Left collapses this one"
+            focus: true
+            activeFocusOnTab: root.keyboardReachable
+            boundsBehavior: Flickable.StopAtBounds
+            highlightMoveDuration: 0
+            currentIndex: -1
+            keyNavigationEnabled: false
+            reuseItems: true
+            Accessible.role: Accessible.List
+            Accessible.name: "Collections"
+            onCurrentIndexChanged: if (!root.restoring) root.currentKey = root.keyOf(root.rows[currentIndex])
+            onActiveFocusChanged: if (activeFocus && currentIndex < 0 && count > 0) currentIndex = 0
+            // Beside the stuck headers too, not cut by them.
+            ScrollBar.vertical: ScrollBar {
+                objectName: "sidebarCollectionsScrollBar"
+                parent: root
+                x: root.width - width
+                y: 0
+                height: root.height
+                policy: root.overflowing ? ScrollBar.AlwaysOn : ScrollBar.AlwaysOff
+                width: 6
+                Accessible.ignored: !root.overflowing
+                contentItem: Rectangle {
+                    visible: parent.size < 1
+                    implicitWidth: 4
+                    radius: width / 2
+                    color: root.shade(Theme.foreground, 0.32)
                 }
+                background: Rectangle { color: "transparent" }
             }
 
-            Rectangle {
-                id: entry
-                objectName: "collectionRow"
-                visible: rowItem.kind !== "header"
-                anchors.fill: parent
-                anchors.topMargin: 1
-                anchors.bottomMargin: 1
-                radius: Math.min(6, Theme.cornerRadius)
-                color: rowItem.active ? root.shade(Theme.accent, 0.18)
-                       : mouse.containsMouse ? root.shade(Theme.foreground, 0.07) : "transparent"
-                border.width: rowItem.current ? 1 : 0
-                border.color: Theme.accent
-                Accessible.ignored: !visible
-                Accessible.role: Accessible.ListItem
+            Keys.onPressed: function (event) {
+                const index = currentIndex < 0 ? 0 : currentIndex
+                const row = root.rows[index]
+                if (!row) return
+                root.keyboardUsed()
+                const ctrl = (event.modifiers & Qt.ControlModifier) !== 0
+                if (ctrl && (event.key === Qt.Key_Down || event.key === Qt.Key_Up)) {
+                    const target = root.stepSection(index, event.key === Qt.Key_Down ? 1 : -1)
+                    if (target >= 0) root.moveTo(target)
+                    event.accepted = true
+                    return
+                }
+                if (ctrl && event.key === Qt.Key_Left) {
+                    const header = root.sectionHeaderOf(index)
+                    if (header >= 0) {
+                        const section = root.rows[header].section
+                        root.setOpen(section, false)
+                        root.moveTo(root.indexOfKey("header:" + section))
+                    }
+                    event.accepted = true
+                    return
+                }
+                if (event.key === Qt.Key_Down) {
+                    if (index + 1 < root.rows.length) root.moveTo(index + 1)
+                    else root.exitDown()
+                } else if (event.key === Qt.Key_Up) {
+                    if (index > 0) root.moveTo(index - 1)
+                    else root.exitUp()
+                } else if (event.key === Qt.Key_Home) {
+                    root.moveTo(0)
+                } else if (event.key === Qt.Key_End) {
+                    root.moveTo(root.rows.length - 1)
+                } else if (event.key === Qt.Key_Right) {
+                    if (row.kind === "header" && !row.open) root.setOpen(row.section, true)
+                    else if (row.kind === "year" && !row.open) root.setYearOpen(row.name, true)
+                    else if ((row.kind === "header" || row.kind === "year")
+                             && index + 1 < root.rows.length && root.parentIndex(index + 1) === index)
+                        root.moveTo(index + 1)
+                } else if (event.key === Qt.Key_Left) {
+                    if (row.kind === "header" && row.open) root.setOpen(row.section, false)
+                    else if (row.kind === "year" && row.open) root.setYearOpen(row.name, false)
+                    else root.moveTo(root.parentIndex(index))
+                } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter
+                           || event.key === Qt.Key_Space) {
+                    root.activate(index)
+                } else if (event.key === Qt.Key_Menu
+                           || (event.key === Qt.Key_F10 && (event.modifiers & Qt.ShiftModifier))) {
+                    const item = itemAtIndex(index)
+                    if (item) root.openMenu(index, item, 8, item.height)
+                } else {
+                    return
+                }
+                event.accepted = true
+            }
+
+            delegate: Item {
+                id: rowItem
+                required property int index
+                required property var modelData
+                readonly property string kind: modelData.kind
+                readonly property bool current: ListView.isCurrentItem && list.activeFocus && root.keyboardShown
+                readonly property bool active: { void Captures.albumFilter; void Captures.tagFilter
+                                                 void Captures.dateFrom; void Captures.dateTo
+                                                 return root.isActive(modelData) }
+                width: list.width - root.gutter
+                height: root.rowHeight(kind)
+                // The list hands the keyboard to its current row, so the row
+                // itself is what a screen reader reads, not a nameless filler.
+                Accessible.role: kind === "header" ? Accessible.Heading : Accessible.ListItem
                 Accessible.name: {
-                    const row = rowItem.modelData
-                    const counted = rowItem.count >= 0 ? ", " + root.items(rowItem.count) : ""
-                    switch (rowItem.kind) {
+                    const row = modelData
+                    if (kind === "header") return row.label + ", " + row.count
+                    const counted = count >= 0 ? ", " + root.items(count) : ""
+                    switch (kind) {
                     case "album": return "Album " + row.name + counted
                     case "tag": return "Tag " + row.name + counted
                     default: return row.label + counted
                     }
                 }
-                Accessible.description: rowItem.kind === "tag" && rowItem.modelData.fromFile
-                                        ? "From the files' keywords" : ""
-                Accessible.selectable: true
-                Accessible.selected: rowItem.active
-                // A year opens to its months, as a tree item would.
-                Accessible.expandable: rowItem.kind === "year"
-                Accessible.expanded: rowItem.kind === "year" && rowItem.modelData.open === true
-                Accessible.onPressAction: root.activate(rowItem.index)
+                Accessible.description: kind === "header"
+                                        ? (modelData.open ? "Expanded. Enter collapses it" : "Collapsed. Enter expands it")
+                                        : kind === "tag" && modelData.fromFile ? "From the files' keywords" : ""
+                Accessible.focusable: true
+                Accessible.focused: ListView.isCurrentItem && list.activeFocus
+                Accessible.selectable: kind !== "header"
+                Accessible.selected: active
+                // A header and a year open, as a tree item would.
+                Accessible.expandable: kind === "header" || kind === "year"
+                Accessible.expanded: (kind === "header" || kind === "year") && modelData.open === true
+                Accessible.onPressAction: root.activate(index)
+                // Albums read their paths once per change, for the count and cover.
+                readonly property var albumPaths: {
+                    void root.detailRevision
+                    return kind === "album" ? Settings.albumPaths(modelData.name) : []
+                }
+                readonly property int count: {
+                    void root.detailRevision
+                    return kind === "album" ? albumPaths.length
+                         : kind === "tag" ? Settings.tagItemCount(modelData.name)
+                         : modelData.count !== undefined ? modelData.count : -1
+                }
 
-                readonly property real indent: Math.min(rowItem.modelData.depth * 14, width / 2)
-
-                Text {
-                    id: chevron
-                    x: 6 + entry.indent
-                    anchors.verticalCenter: parent.verticalCenter
-                    width: rowItem.kind === "year" ? 16 : 4
-                    text: rowItem.kind === "year" ? (rowItem.modelData.open ? "▾" : "▸") : ""
-                    color: Theme.mutedText
-                    font.family: Theme.fontFamily
-                    font.pixelSize: 13
-                }
-                Rectangle {
-                    id: coverFrame
-                    visible: rowItem.kind === "album"
-                    anchors.left: chevron.right
-                    anchors.verticalCenter: parent.verticalCenter
-                    width: visible ? 32 : 0
-                    height: 32
-                    radius: Math.min(4, Theme.cornerRadius)
-                    color: root.shade(Theme.foreground, 0.08)
-                    clip: true
-                    readonly property var cover: {
-                        void root.detailRevision
-                        return rowItem.kind === "album" ? Captures.coverFor(rowItem.albumPaths) : ({})
-                    }
-                    readonly property real dpr: Screen.devicePixelRatio
-                    Image {
-                        objectName: "albumCover"
-                        anchors.fill: parent
-                        fillMode: Image.PreserveAspectCrop
-                        asynchronous: true
-                        sourceSize: Qt.size(32, 32)
-                        readonly property var cover: coverFrame.cover
-                        source: cover && cover.path
-                                ? "image://thumbs/" + coverFrame.dpr + (cover.isVideo ? "@20" : "")
-                                  + "~" + encodeURIComponent(cover.thumbnailVersion || String(cover.stamp))
-                                  + encodeURIComponent(cover.path)
-                                : ""
-                    }
-                }
-                Icon {
-                    id: fileMark
-                    visible: rowItem.kind === "tag" && rowItem.modelData.fromFile === true
-                    anchors.left: coverFrame.right
-                    anchors.leftMargin: visible ? 4 : 0
-                    anchors.verticalCenter: parent.verticalCenter
-                    width: visible ? 12 : 0
-                    size: 12
-                    name: "file"
-                    color: Theme.mutedText
-                }
-                Text {
-                    anchors.left: fileMark.right
-                    anchors.leftMargin: 6
-                    anchors.right: countText.left
-                    anchors.rightMargin: 6
-                    anchors.verticalCenter: parent.verticalCenter
-                    text: rowItem.kind === "month" ? rowItem.modelData.shortLabel : rowItem.modelData.label
-                    elide: Text.ElideRight
-                    font.family: Theme.fontFamily
-                    font.pixelSize: 12
-                    color: Theme.foreground
-                }
-                Text {
-                    id: countText
+                SidebarHeader {
+                    visible: rowItem.kind === "header"
+                    anchors.left: parent.left
                     anchors.right: parent.right
-                    anchors.rightMargin: 8
-                    anchors.verticalCenter: parent.verticalCenter
-                    text: rowItem.count >= 0 ? Number(rowItem.count).toLocaleString(Qt.locale(), "f", 0) : ""
-                    font.family: Theme.fontFamily
-                    font.pixelSize: 11
-                    color: Theme.mutedText
-                }
-                MouseArea {
-                    id: mouse
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    acceptedButtons: Qt.LeftButton | Qt.RightButton
-                    onClicked: function (event) {
+                    anchors.bottom: parent.bottom
+                    anchors.bottomMargin: 2
+                    height: 28
+                    label: rowItem.modelData.label
+                    count: rowItem.kind === "header" ? rowItem.modelData.count : -1
+                    expanded: rowItem.modelData.open === true
+                    keyboardCurrent: rowItem.current
+                    Accessible.ignored: true
+                    onToggled: {
+                        root.pointerUsed()
+                        // The row first, so taking the keyboard does not
+                        // scroll the list to its top row.
                         list.currentIndex = rowItem.index
                         list.forceActiveFocus()
-                        if (event.button === Qt.RightButton) {
-                            root.openMenu(rowItem.index, entry, event.x, event.y)
-                        } else if (rowItem.kind === "year" && event.x < chevron.x + chevron.width) {
-                            list.currentIndex = rowItem.index
-                            root.setYearOpen(rowItem.modelData.name, !rowItem.modelData.open)
-                        } else {
-                            root.activate(rowItem.index)
-                        }
+                        root.activate(rowItem.index)
                     }
                 }
-                ThemedToolTip {
-                    requested: mouse.containsMouse && rowItem.kind === "tag"
-                    text: rowItem.modelData.fromFile
-                          ? rowItem.modelData.name + " · from the files' keywords"
-                          : String(rowItem.modelData.name)
+
+                Rectangle {
+                    id: entry
+                    objectName: "collectionRow"
+                    visible: rowItem.kind !== "header"
+                    anchors.fill: parent
+                    anchors.topMargin: 1
+                    anchors.bottomMargin: 1
+                    radius: Math.min(6, Theme.cornerRadius)
+                    color: rowItem.active ? root.shade(Theme.accent, 0.18)
+                           : mouse.containsMouse ? root.shade(Theme.foreground, 0.07) : "transparent"
+                    border.width: rowItem.current ? 1 : 0
+                    border.color: Theme.accent
+                    Accessible.ignored: true
+
+                    readonly property real indent: Math.min(rowItem.modelData.depth * 14, width / 2)
+
+                    Text {
+                        id: chevron
+                        x: 6 + entry.indent
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: rowItem.kind === "year" ? 16 : 4
+                        text: rowItem.kind === "year" ? (rowItem.modelData.open ? "▾" : "▸") : ""
+                        color: Theme.mutedText
+                        font.family: Theme.fontFamily
+                        font.pixelSize: 13
+                    }
+                    Rectangle {
+                        id: coverFrame
+                        visible: rowItem.kind === "album"
+                        anchors.left: chevron.right
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: visible ? 32 : 0
+                        height: 32
+                        radius: Math.min(4, Theme.cornerRadius)
+                        color: root.shade(Theme.foreground, 0.08)
+                        clip: true
+                        readonly property var cover: {
+                            void root.detailRevision
+                            return rowItem.kind === "album" ? Captures.coverFor(rowItem.albumPaths) : ({})
+                        }
+                        readonly property real dpr: Screen.devicePixelRatio
+                        // Rounded like the grid's thumbnails: clip alone only
+                        // cuts to the square.
+                        Rectangle {
+                            id: coverMask
+                            anchors.fill: parent
+                            radius: coverFrame.radius
+                            visible: false
+                            layer.enabled: coverFrame.radius > 0
+                            layer.smooth: true
+                        }
+                        Image {
+                            objectName: "albumCover"
+                            anchors.fill: parent
+                            fillMode: Image.PreserveAspectCrop
+                            asynchronous: true
+                            sourceSize: Qt.size(32, 32)
+                            layer.enabled: coverFrame.radius > 0
+                            layer.smooth: true
+                            layer.effect: MultiEffect {
+                                maskEnabled: true
+                                maskSource: coverMask
+                                maskThresholdMin: 0.5
+                                maskSpreadAtMin: 1.0
+                            }
+                            readonly property var cover: coverFrame.cover
+                            source: cover && cover.path
+                                    ? "image://thumbs/" + coverFrame.dpr + (cover.isVideo ? "@20" : "")
+                                      + "~" + encodeURIComponent(cover.thumbnailVersion || String(cover.stamp))
+                                      + encodeURIComponent(cover.path)
+                                    : ""
+                        }
+                    }
+                    Icon {
+                        id: fileMark
+                        visible: rowItem.kind === "tag" && rowItem.modelData.fromFile === true
+                        anchors.left: coverFrame.right
+                        anchors.leftMargin: visible ? 4 : 0
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: visible ? 12 : 0
+                        size: 12
+                        name: "file"
+                        color: Theme.mutedText
+                    }
+                    Text {
+                        anchors.left: fileMark.right
+                        anchors.leftMargin: 6
+                        anchors.right: countText.left
+                        anchors.rightMargin: 6
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: rowItem.kind === "month" ? rowItem.modelData.shortLabel : rowItem.modelData.label
+                        elide: Text.ElideRight
+                        font.family: Theme.fontFamily
+                        font.pixelSize: 12
+                        color: Theme.foreground
+                    }
+                    Text {
+                        id: countText
+                        anchors.right: parent.right
+                        anchors.rightMargin: 8
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: rowItem.count >= 0 ? Number(rowItem.count).toLocaleString(Qt.locale(), "f", 0) : ""
+                        font.family: Theme.fontFamily
+                        font.pixelSize: 11
+                        color: Theme.mutedText
+                    }
+                    MouseArea {
+                        id: mouse
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        acceptedButtons: Qt.LeftButton | Qt.RightButton
+                        onClicked: function (event) {
+                            root.pointerUsed()
+                            list.currentIndex = rowItem.index
+                            list.forceActiveFocus()
+                            if (event.button === Qt.RightButton) {
+                                root.openMenu(rowItem.index, entry, event.x, event.y)
+                            } else if (rowItem.kind === "year" && event.x < chevron.x + chevron.width) {
+                                list.currentIndex = rowItem.index
+                                root.setYearOpen(rowItem.modelData.name, !rowItem.modelData.open)
+                            } else {
+                                root.activate(rowItem.index)
+                            }
+                        }
+                    }
+                    ThemedToolTip {
+                        requested: mouse.containsMouse && rowItem.kind === "tag"
+                        text: rowItem.modelData.fromFile
+                              ? rowItem.modelData.name + " · from the files' keywords"
+                              : String(rowItem.modelData.name)
+                    }
                 }
+            }
+        }
+    }
+
+    // Stuck headers, drawn over the list on the sidebar's own surface.
+    component PinnedHeader: Item {
+        id: pin
+        property int rowIndex: -1
+        // Only a header row: while rows are handed over the index can
+        // briefly name another kind.
+        readonly property var row: rowIndex >= 0 && root.rows[rowIndex] && root.rows[rowIndex].kind === "header"
+                                   ? root.rows[rowIndex] : null
+        width: list.width - root.gutter
+        height: root.headerHeight
+        visible: row !== null
+        SidebarHeader {
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.bottom: parent.bottom
+            anchors.bottomMargin: 2
+            height: 28
+            label: pin.row ? pin.row.label : ""
+            count: pin.row && pin.row.count !== undefined ? pin.row.count : -1
+            expanded: !!pin.row && pin.row.open === true
+            keyboardCurrent: false
+            // The real header row is what the keyboard and screen readers
+            // reach; this is a shortcut to it for the pointer.
+            Accessible.ignored: true
+        }
+        MouseArea {
+            anchors.fill: parent
+            cursorShape: Qt.PointingHandCursor
+            onClicked: { root.pointerUsed(); root.pinnedHeaderClicked(pin.rowIndex) }
+        }
+    }
+    Item {
+        id: pins
+        anchors.fill: parent
+        clip: true
+        PinnedHeader {
+            objectName: "pinnedTopHeader"
+            rowIndex: root.pinned.top
+            y: root.pinned.shift
+        }
+        Repeater {
+            model: root.pinned.bottom
+            PinnedHeader {
+                required property int modelData
+                required property int index
+                objectName: "pinnedBottomHeader"
+                rowIndex: modelData
+                y: pins.height - (root.pinned.bottom.length - index) * root.headerHeight
             }
         }
     }
@@ -518,9 +824,14 @@ FocusScope {
         property string name: ""
         modal: true
         dim: false
+        // Drawn in the window as an item and opaque whatever the theme's
+        // alpha: as a separate popup window it was see-through on the
+        // desktop, with the sidebar showing behind its rows.
+        popupType: Popup.Item
         background: Rectangle {
+            objectName: "sidebarCollectionMenuBackground"
             implicitWidth: 200
-            color: Theme.background
+            color: Qt.rgba(Theme.background.r, Theme.background.g, Theme.background.b, 1)
             border.width: 1
             border.color: root.shade(Theme.foreground, 0.16)
             radius: Theme.cornerRadius > 0 ? Theme.cornerRadius : 3

@@ -112,8 +112,11 @@ Popup {
         else menu.jumpRequested(row.key)
     }
 
+    // Opaque whatever the theme's alpha, and drawn in the window.
+    popupType: Popup.Item
     background: Rectangle {
-        color: Theme.background
+        objectName: "dateJumpBackground"
+        color: Qt.rgba(Theme.background.r, Theme.background.g, Theme.background.b, 1)
         border.width: 1
         border.color: menu.shade(Theme.foreground, 0.16)
         radius: Theme.cornerRadius > 0 ? Theme.cornerRadius : 3

@@ -49,6 +49,10 @@
   viewer.
 - Deleting a tag that has tags nested under it says how many went with it,
   as in "Deleted tag Travel and 2 nested tags".
+- A RAW+JPEG pair shown as one tile now counts once and is dated by the
+  file the tile shows, usually the RAW, in date filters, saved views, Browse
+  and Jump to date. When the two files' dates differed, the JPEG used to be
+  counted and filtered by its own date as well.
 
 ### Fixed
 
@@ -102,6 +106,12 @@
   zoom bar; it shows with the grid only.
 - The preview's shortcut help lists Previous / next file as one row, as the
   viewer's does.
+- The file name shown for the keyboard's current tile stays inside the tile
+  instead of covering the day header and the tiles around it.
+- The grid's scroll thumb matches the view as soon as a search is cleared.
+- On a narrow tile a star rating shortens to "★4" before the file size gives
+  way, so copies in a duplicate set can still be told apart.
+- The empty library's buttons line up when they wrap onto two rows.
 
 ## 1.19.1
 

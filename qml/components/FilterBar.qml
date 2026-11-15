@@ -138,6 +138,13 @@ Item {
 
     // Where Main wants the search field: the header's primary row.
     property Item searchSlot: null
+    // Where the chips row starts: beside the folder sidebar when it shows,
+    // since the sidebar sits right under the controls.
+    property real chipInset: 0
+    // The free stretch of the controls row between the filters and the
+    // sort, where the date pill goes when the header has no room for it.
+    readonly property real rowSpareLeft: kinds.x + kinds.width + 12
+    readonly property real rowSpareRight: sortButton.x - 12
     readonly property alias searchField: searchBox
     // The header shows the bar only once there is something to filter.
     readonly property bool shown: Captures.sourceCount > 0 || chips.chips.length > 0
@@ -404,9 +411,9 @@ Item {
     // so a folder adds one row rather than two.
     Item {
         id: chipRow
-        x: 20
+        x: root.chipInset + 20
         y: root.controlsHeight + 1
-        width: root.width - 40
+        width: root.width - root.chipInset - 40
         height: Math.max(chips.implicitHeight, pinCurrentFolder.visible ? pinCurrentFolder.height : 0)
         visible: chips.chips.length > 0 || pinCurrentFolder.visible
 
