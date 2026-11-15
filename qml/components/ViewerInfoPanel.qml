@@ -53,6 +53,16 @@ Rectangle {
         onTriggered: { root.status = ""; root.statusUndoId = 0 }
     }
     onFilePathChanged: { root.status = ""; root.statusUndoId = 0 }
+    // Undone elsewhere (Ctrl+Z): the line no longer says what is true.
+    Connections {
+        target: Settings
+        function onUndoChanged() {
+            if (root.statusUndoId > 0 && Settings.latestUndoId !== root.statusUndoId) {
+                root.status = ""
+                root.statusUndoId = 0
+            }
+        }
+    }
 
     // Alt+T, while the details are shown.
     Shortcut {
