@@ -2062,6 +2062,8 @@ ApplicationWindow {
             anchors.topMargin: 1
             anchors.bottom: parent.bottom
             visible: notice.undoable
+            // Not behind a sheet or menu, where Tab could still reach it.
+            enabled: !root.anySheetOpen && !root.popupOpen
             label: "Undo"
             toolTip: "Undo"
             shortcut: ShortcutCatalog.sequence("library", "undo")[0]

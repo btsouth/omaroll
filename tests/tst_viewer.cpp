@@ -2653,7 +2653,24 @@ private slots:
     QVERIFY(qAbs(player->position() - at) < 1000);
     m_settings->setVideoMuted(true);
     QCOMPARE(volumeFace->text(QAccessible::Description), QStringLiteral("Muted"));
+    // Muted reads as 0, and stepping down from there stays muted at 0
+    // rather than jumping back to the volume kept for unmuting.
+    QTRY_COMPARE(volumeFace->valueInterface()->currentValue().toReal(), 0.0);
+    QTest::keyClick(m_window, Qt::Key_Left);
+    QVERIFY(QMetaObject::invokeMethod(volume, "change", Q_ARG(QVariant, -0.05)));
+    QVERIFY(m_settings->videoMuted());
+    QCOMPARE(m_settings->videoVolume(), 0.75);
+    QCOMPARE(volumeFace->valueInterface()->currentValue().toReal(), 0.0);
     m_settings->setVideoMuted(false);
+    QTRY_COMPARE(volumeFace->valueInterface()->currentValue().toReal(), 75.0);
+
+    // A value written by assistive technology sets the volume, and seeks.
+    volumeFace->valueInterface()->setCurrentValue(30);
+    QTRY_COMPARE(m_settings->videoVolume(), 0.3);
+    QCOMPARE(volumeFace->valueInterface()->currentValue().toReal(), 30.0);
+    seekFace->valueInterface()->setCurrentValue(10000);
+    QTRY_VERIFY(qAbs(player->position() - 10000) < 1000);
+    QTRY_VERIFY(qAbs(seekFace->valueInterface()->currentValue().toReal() - player->position()) < 1);
 
     QQuickItem* speed = item(QStringLiteral("viewerSpeedButton"));
     QTRY_VERIFY(speed->isVisible());
@@ -2678,6 +2695,7 @@ private slots:
     QVERIFY(QFile::copy(media(QStringLiteral("shot 2.jpg")), files.at(1)));
     open({files.at(0)});
     QTRY_VERIFY(prop("imageReady").toBool());
+    QTRY_COMPARE(m_session->count(), 2);
     QQuickItem* confirm = item(QStringLiteral("viewerConfirm"));
     QQuickItem* trash = item(QStringLiteral("viewerTrashButton"));
     QQuickItem* yes = find(confirm, [](QQuickItem* c) { return c->objectName() == QStringLiteral("confirmSheetConfirm"); });
@@ -2728,6 +2746,61 @@ private slots:
     QTRY_VERIFY(item(QStringLiteral("viewerKeys"))->hasActiveFocus());
   }
 
+  // A held Enter on the Trash button opens the question once and never
+  // answers it: its repeats neither confirm the prompt nor press the button
+  // again once the keyboard comes back to it. Only a fresh press confirms.
+  void aHeldEnterNeverChainsTrashConfirmations() {
+    QTemporaryDir dir;
+    QVERIFY(dir.isValid());
+    const QStringList files{dir.filePath(QStringLiteral("a.jpg")), dir.filePath(QStringLiteral("b.jpg"))};
+    QVERIFY(QFile::copy(media(QStringLiteral("Shot 1.jpg")), files.at(0)));
+    QVERIFY(QFile::copy(media(QStringLiteral("shot 2.jpg")), files.at(1)));
+    open({files.at(0)});
+    QTRY_VERIFY(prop("imageReady").toBool());
+    QTRY_COMPARE(m_session->count(), 2);
+    QQuickItem* confirm = item(QStringLiteral("viewerConfirm"));
+    QQuickItem* trash = item(QStringLiteral("viewerTrashButton"));
+    for (int step = 0; step < 40 && !trash->hasActiveFocus(); ++step) QTest::keyClick(m_window, Qt::Key_Tab);
+    QVERIFY(trash->hasActiveFocus());
+    const auto remaining = [&] {
+      return int(QFile::exists(files.at(0))) + int(QFile::exists(files.at(1)));
+    };
+    const auto hold = [&](Qt::Key key, const QString& text, int repeats) {
+      QKeyEvent press(QEvent::KeyPress, key, Qt::NoModifier, text);
+      QCoreApplication::sendEvent(m_window, &press);
+      for (int i = 0; i < repeats; ++i) {
+        QKeyEvent repeat(QEvent::KeyPress, key, Qt::NoModifier, text, true);
+        QCoreApplication::sendEvent(m_window, &repeat);
+        QCoreApplication::processEvents();
+      }
+      QKeyEvent release(QEvent::KeyRelease, key, Qt::NoModifier, text);
+      QCoreApplication::sendEvent(m_window, &release);
+      QCoreApplication::processEvents();
+    };
+
+    // Enter held on the button: the question opens and stays unanswered.
+    hold(Qt::Key_Return, QStringLiteral("\r"), 8);
+    QTRY_VERIFY(confirm->isVisible());
+    QCOMPARE(remaining(), 2);
+    // Space held on the prompt's button does not answer it either.
+    hold(Qt::Key_Space, QStringLiteral(" "), 8);
+    QVERIFY(confirm->isVisible());
+    QCOMPARE(remaining(), 2);
+
+    // A fresh Enter answers it, and only it; focus returns to Trash, and
+    // the rest of that press, held, does not start the next question.
+    hold(Qt::Key_Return, QStringLiteral("\r"), 8);
+    QTRY_VERIFY(!confirm->isVisible());
+    QTRY_COMPARE(remaining(), 1);
+    QVERIFY(!QFile::exists(files.at(0)));
+    QTRY_VERIFY(trash->hasActiveFocus());
+    hold(Qt::Key_Return, QStringLiteral("\r"), 0);
+    QTRY_VERIFY(confirm->isVisible());
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(!confirm->isVisible());
+    QCOMPARE(remaining(), 1);
+  }
+
   // Help starts with Navigation, files the flips and saved copy under View,
   // and gives each action one row: the arrows and Page Up and Down share
   // "Previous / next file".
@@ -2775,6 +2848,8 @@ private slots:
   // Ctrl+O still offers another app for the one on screen.
   void ctrlShiftOChoosesAFileToOpen() {
     open({media(QStringLiteral("Shot 1.jpg"))});
+    // A chooser still waiting on a portal must not reach the next test.
+    const auto closeChoosers = qScopeGuard([this] { qDeleteAll(m_actions->findChildren<FileChooserRequest*>()); });
     QSignalSpy failed(m_actions, &ActionLauncher::failed);
     QTest::keyClick(m_window, Qt::Key_O, Qt::ControlModifier | Qt::ShiftModifier);
     // A portal answers with a chooser; a test bus without one says so.

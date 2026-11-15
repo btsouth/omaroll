@@ -174,9 +174,14 @@ Item {
         } else if (event.key === Qt.Key_Escape) {
             root.close()
             event.accepted = true
-        } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) {
-            root.close()
-            root.accepted()
+        } else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter
+                   || event.key === Qt.Key_Space) {
+            // Only a fresh press confirms: the repeats of a key held since
+            // before the prompt opened are not an answer to it.
+            if (!event.isAutoRepeat && event.key !== Qt.Key_Space) {
+                root.close()
+                root.accepted()
+            }
             event.accepted = true
         }
     }

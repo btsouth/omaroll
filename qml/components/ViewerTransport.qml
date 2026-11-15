@@ -124,7 +124,27 @@ Rectangle {
         id: scrub
         objectName: "viewerScrub"
         activeFocusOnTab: root.duration > 0
-        readonly property real value: root.position
+        // Written by assistive technology as well as read: Qt sets "value"
+        // for a slider's setCurrentValue. It follows the player, and a
+        // value written from outside seeks there.
+        property real value: 0
+        readonly property real playerValue: root.position
+        property bool following: false
+        function follow() {
+            following = true
+            value = playerValue
+            following = false
+        }
+        onPlayerValueChanged: follow()
+        Component.onCompleted: follow()
+        onValueChanged: {
+            if (following) return
+            if (root.player && root.duration > 0 && Math.abs(value - playerValue) >= 1) {
+                root.seekRequested(Math.max(0, Math.min(root.duration, value)))
+            } else {
+                follow()
+            }
+        }
         readonly property real minimumValue: 0
         readonly property real maximumValue: Math.max(0, root.duration)
         readonly property real stepSize: 5000
@@ -321,7 +341,7 @@ Rectangle {
             Keys.onPressed: function (event) {
                 if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter
                         || event.key === Qt.Key_Space) {
-                    if (root.player) root.cycleRate()
+                    if (root.player && !event.isAutoRepeat) root.cycleRate()
                     event.accepted = true
                 }
             }
@@ -375,7 +395,23 @@ Rectangle {
             activeFocusOnTab: true
 
             readonly property real level: Settings.videoMuted ? 0 : Settings.videoVolume
-            readonly property real value: Math.round(level * 100)
+            // In percent, as heard: 0 while muted. Written by assistive
+            // technology too (Qt sets "value"), which sets the volume.
+            property real value: 0
+            readonly property real heardValue: Math.round(level * 100)
+            property bool following: false
+            function follow() {
+                following = true
+                value = heardValue
+                following = false
+            }
+            onHeardValueChanged: follow()
+            Component.onCompleted: follow()
+            onValueChanged: {
+                if (following) return
+                if (Math.round(value) !== heardValue) setLevel(Math.round(value) / 100)
+                follow()
+            }
             readonly property real minimumValue: 0
             readonly property real maximumValue: 100
             readonly property real stepSize: 5
@@ -392,8 +428,11 @@ Rectangle {
                 }
             }
             function setFrom(x) { setLevel(x / width) }
+            // From the level heard: down from muted stays muted at 0, and
+            // the volume kept for unmuting is left alone.
             function change(amount) {
-                setLevel(Math.round((Settings.videoVolume + amount) * 100) / 100)
+                if (amount < 0 && level <= 0) return
+                setLevel(Math.round((level + amount) * 100) / 100)
             }
 
             Keys.onPressed: function (event) {

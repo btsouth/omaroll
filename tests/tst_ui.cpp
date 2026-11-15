@@ -548,6 +548,8 @@ private slots:
     QTRY_VERIFY(!help->property("visible").toBool());
     QTRY_VERIFY(grid->hasActiveFocus());
 
+    // A chooser still waiting on a portal must not reach the next test.
+    const auto closeChoosers = qScopeGuard([this] { qDeleteAll(m_actions->findChildren<FileChooserRequest*>()); });
     QSignalSpy failed(m_actions, &ActionLauncher::failed);
     QTest::keyClick(m_window, Qt::Key_O, Qt::ControlModifier | Qt::ShiftModifier);
     QTRY_VERIFY(!m_actions->findChildren<FileChooserRequest*>().isEmpty() || failed.count() > 0);
@@ -8558,6 +8560,13 @@ private slots:
     QVERIFY(undo->height() >= 30);
     QCOMPARE(QAccessible::queryAccessibleInterface(undo)->role(), QAccessible::Button);
     QVERIFY(undo->activeFocusOnTab());
+    // Behind a sheet, Tab cannot land on it and Space cannot undo.
+    QVERIFY(undo->isEnabled());
+    QVERIFY(QMetaObject::invokeMethod(item("settingsSheet"), "open"));
+    QTRY_VERIFY(item("settingsSheet")->isVisible());
+    QVERIFY(!undo->isEnabled());
+    QVERIFY(QMetaObject::invokeMethod(item("settingsSheet"), "close"));
+    QTRY_VERIFY(undo->isEnabled());
     click(undo);
     QTRY_VERIFY(QFileInfo::exists(first));
     QCOMPARE(QImage(first).pixelColor(0, 0), QColor(201, 33, 77));

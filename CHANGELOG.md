@@ -28,7 +28,9 @@
 - Notices such as "Moved to Trash" are read out as they appear, and their
   Undo is a full-height button that `Tab` reaches in the viewer.
 - Closing a prompt or sheet gives the keyboard back to the button that
-  opened it, in the viewer and the library.
+  opened it, in the viewer and the library. A held `Enter` or `Space`
+  presses a button once and never answers the prompt it opens; only a fresh
+  press does.
 - Settings switches and buttons are named as their rows are titled, so a
   screen reader says "Show hidden media" rather than "Hidden items".
 - Resume and Start over in the viewer play the video from the chosen spot

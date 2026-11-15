@@ -2740,6 +2740,8 @@ ApplicationWindow {
             anchors.top: parent.top
             anchors.bottom: parent.bottom
             visible: toast.undoable
+            // Not behind a prompt, sheet or menu.
+            enabled: !root.blockingActionOpen
             label: "Undo"
             toolTip: "Undo"
             shortcut: ShortcutCatalog.quickHints.undo
