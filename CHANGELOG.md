@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Fixed
+
+- Resume and Start over in the viewer play the video from the chosen spot
+  instead of leaving it paused until Space.
+
 ## 1.19.1
 
 Fixes for menus, tooltips, the PDF preview and video details, found on a real
