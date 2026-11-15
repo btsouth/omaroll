@@ -2,14 +2,21 @@
 
 ## Latest release
 
-[Omaroll 1.19.0](https://github.com/btsouth/omaroll/releases/tag/v1.19.0), dated
-12 November 2026. See the [changelog](../CHANGELOG.md#1190) for what it includes.
+[Omaroll 1.19.1](https://github.com/btsouth/omaroll/releases/tag/v1.19.1), dated
+15 November 2026. See the [changelog](../CHANGELOG.md#1191) for what it includes.
 
 The release provides x86_64 and aarch64 Arch packages, a source archive and
 PKGBUILD, with checksums and signed build provenance. Installation and
 verification commands are in the [README](../README.md#install-or-update).
 
 ## Current work
+
+Version 1.19.1 fixes menus, tooltips, the PDF preview's find controls and
+video details. The fixes came from the 1.19.0 check on a real Omarchy desktop
+and from opening every menu, popup and sheet in an isolated desktop, in dark
+and light themes and a narrow window. 4K playback was measured on AMD
+graphics: frames go from the decoder to the screen without a copy, at the
+same CPU cost as mpv. On NVIDIA Qt 6.12 still copies each frame.
 
 Version 1.19.0 redesigns the library and viewer: date sections, file-manager
 selection, search fields and combined filters, sort, rename, move and copy in

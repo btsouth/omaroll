@@ -55,6 +55,17 @@
     </screenshot>
   </screenshots>
   <releases>
+    <release version="1.19.1" date="2026-11-15">
+      <description>
+        <p>Fixes for menus, tooltips, the PDF preview and video details.</p>
+        <ul>
+          <li>Menus open where they belong, are solid in every theme and show the row the arrow keys are on</li>
+          <li>PDF find marks matches on the page, and its controls are readable over a white page</li>
+          <li>Video details list every audio track and the subtitles</li>
+          <li>Tooltips show a shortcut as a key and wrap long text</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.19.0" date="2026-11-12">
       <description>
         <p>A redesigned library and viewer, sections by date, tags and ratings from other photo tools, and clear help when something goes wrong.</p>
