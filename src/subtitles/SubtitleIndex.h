@@ -3,6 +3,7 @@
 #include <QHash>
 #include <QFileSystemWatcher>
 #include <QObject>
+#include <QSet>
 #include <QString>
 #include <QStringList>
 
@@ -46,6 +47,15 @@ public:
   // Number of parsed cues, for tests and diagnostics.
   Q_INVOKABLE [[nodiscard]] int cueCount(const QString& subtitlePath);
 
+  // A text subtitle track inside a video, read once with ffmpeg on a worker.
+  // Qt's player draws an embedded cue only while it plays, so a paused video
+  // that has its subtitles switched on, or is sought, shows its cue from
+  // here. Picture subtitles and a missing ffmpeg give no cues, and
+  // embeddedReady() stays false so the player's own text is kept.
+  Q_INVOKABLE [[nodiscard]] bool embeddedReady(const QString& videoPath, int track);
+  Q_INVOKABLE [[nodiscard]] QString embeddedTextAt(const QString& videoPath, int track,
+                                                   qint64 positionMs);
+
   [[nodiscard]] int revision() const { return m_revision; }
 
 signals:
@@ -60,12 +70,17 @@ private:
 
   [[nodiscard]] const Parsed& cuesFor(const QString& path);
   static Parsed parse(const QString& path);
+  static Parsed parseText(QString text, bool webvtt);
+  static Parsed extract(const QString& videoPath, int track);
+  [[nodiscard]] const Parsed* embeddedFor(const QString& videoPath, int track);
   static void collect(const Parsed& parsed, int node, int begin, int end,
                       qint64 position, QStringList& active);
   void invalidate(const QString& path);
 
   QHash<QString, Parsed> m_cache;
   QHash<QString, quint64> m_pending;
+  QHash<QString, Parsed> m_embedded;
+  QSet<QString> m_embeddedPending;
   QFileSystemWatcher m_watcher;
   quint64 m_generation = 0;
   int m_revision = 0;

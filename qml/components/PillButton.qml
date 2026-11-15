@@ -67,8 +67,11 @@ Item {
         anchors.fill: parent
         anchors.margins: root.segment ? 2 : 0
         radius: Theme.cornerRadius > 0 ? Math.max(2, Theme.cornerRadius - (root.segment ? 2 : 0)) : 3
+        // Over a picture or video a chosen pill is solid, like the plain
+        // ones beside it, so a bright frame cannot show through its text.
         color: root.active
-               ? root.shade(root.accentColour, root.floating ? 0.42 : 0.18)
+               ? (root.floating && root.osd ? Osd.over(root.shade(root.accentColour, 0.42), Osd.panelSolid)
+                                            : root.shade(root.accentColour, root.floating ? 0.42 : 0.18))
                : (root.floating
                   ? (root.osd ? root.shade(Osd.panel, hover.hovered ? 0.96 : 0.84)
                               : root.shade(Theme.background, hover.hovered ? 0.92 : 0.72))

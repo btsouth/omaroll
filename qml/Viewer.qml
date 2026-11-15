@@ -230,9 +230,14 @@ ApplicationWindow {
     readonly property bool hasAudioChoices: root.player && root.player.audioTracks.length > 1
     readonly property string subtitleText: {
         void Subtitles.revision
-        return externalSubtitle !== "" && player
-        ? Subtitles.textAt(externalSubtitle, Math.round(player.position) - root.subtitleOffsetMs)
-        : (root.presentation ? root.presentation.subtitleText : "")
+        if (externalSubtitle !== "" && player)
+            return Subtitles.textAt(externalSubtitle, Math.round(player.position) - root.subtitleOffsetMs)
+        // Paused, the player draws no new cue: a track switched on or a seek
+        // shows the cue at the position from the track read with ffmpeg.
+        if (player && player.playbackState !== MediaPlayer.PlayingState && player.activeSubtitleTrack >= 0
+                && Subtitles.embeddedReady(Session.path, player.activeSubtitleTrack))
+            return Subtitles.embeddedTextAt(Session.path, player.activeSubtitleTrack, Math.round(player.position))
+        return root.presentation ? root.presentation.subtitleText : ""
     }
 
     readonly property bool favorite: { void root.marksVersion; return Settings.isFavorite(Session.path) }

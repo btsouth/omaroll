@@ -4899,6 +4899,16 @@ private slots:
     QQuickItem* resume = item(QStringLiteral("viewerResumeButton"));
     QQuickItem* restart = item(QStringLiteral("viewerRestartButton"));
     QTRY_COMPARE(m_window->activeFocusItem(), resume);
+    // Solid, both buttons and the panel behind them, so a bright frame does
+    // not show through the words.
+    QVERIFY(prompt->property("color").value<QColor>().alphaF() >= 0.95);
+    for (QQuickItem* button : {resume, restart}) {
+      QQuickItem* fill = button->childItems().value(0);
+      QVERIFY(fill);
+      QVERIFY2(fill->property("color").value<QColor>().alphaF() >= 0.84,
+               qPrintable(button->objectName()));
+    }
+    QTRY_COMPARE(resume->childItems().value(0)->property("color").value<QColor>().alphaF(), 1.0);
 
     QSignalSpy library(m_session, &ViewerSession::libraryRequested);
     const bool infoWasOpen = prop("infoOpen").toBool();
@@ -4954,6 +4964,73 @@ private slots:
       press(Qt::Key_Return);
       QCOMPARE(library.size(), 1);
     }
+  }
+
+  // Qt draws an embedded cue only while the video plays. Switched on while
+  // paused, or sought while paused, the viewer still shows the cue at the
+  // paused position.
+  void pausedViewerShowsTheEmbeddedCue() {
+    if (QStandardPaths::findExecutable(QStringLiteral("ffmpeg")).isEmpty()) QSKIP("ffmpeg is unavailable");
+    const QString path = m_scratch.filePath(QStringLiteral("paused-cue.mkv"));
+    QVERIFY(QFile::exists(path) || QFile::copy(QFINDTESTDATA("fixtures/viewer/tracks.mkv"), path));
+    m_settings->clearVideoPosition(path);
+    open({path});
+    QMediaPlayer* player = nullptr;
+    QTRY_VERIFY((player = m_window->findChild<QMediaPlayer*>(QStringLiteral("viewerPlayer"))));
+    QTRY_COMPARE(player->playbackState(), QMediaPlayer::PlayingState);
+    QTest::keyClick(m_window, Qt::Key_Space);
+    QTRY_COMPARE(player->playbackState(), QMediaPlayer::PausedState);
+    QVERIFY(QMetaObject::invokeMethod(m_window, "seekTo", Q_ARG(QVariant, 7000)));
+    QTRY_VERIFY(qAbs(player->position() - 7000) < 100);
+    QCOMPARE(player->activeSubtitleTrack(), -1);
+    QTest::keyClick(m_window, Qt::Key_C);
+    QTRY_COMPARE(player->activeSubtitleTrack(), 0);
+    QCOMPARE(player->playbackState(), QMediaPlayer::PausedState);
+    QTRY_COMPARE_WITH_TIMEOUT(prop("subtitleText").toString(), QStringLiteral("Second subtitle"), 10000);
+    QTRY_VERIFY(item(QStringLiteral("viewerSubtitles"))->isVisible());
+    QVERIFY(QMetaObject::invokeMethod(m_window, "seekTo", Q_ARG(QVariant, 2000)));
+    QTRY_COMPARE(prop("subtitleText").toString(), QStringLiteral("Omaroll subtitle test"));
+    QCOMPARE(player->playbackState(), QMediaPlayer::PausedState);
+    // Off again: nothing shows.
+    for (int step = 0; step < 4 && player->activeSubtitleTrack() != -1; ++step) QTest::keyClick(m_window, Qt::Key_C);
+    QTRY_COMPARE(prop("subtitleText").toString(), QString());
+  }
+
+  // A viewer opened fresh, as the command line and the library's Open in
+  // viewer both do through ViewerWindows: the prompt has the keyboard as soon
+  // as it shows, and Enter resumes there rather than doing nothing or
+  // opening the library.
+  void resumePromptAnswersEnterInAFreshViewer() {
+    const QString path = m_scratch.filePath(QStringLiteral("resume-fresh.mkv"));
+    QVERIFY(QFile::exists(path) || QFile::copy(QFINDTESTDATA("fixtures/viewer/tracks.mkv"), path));
+    m_settings->setVideoPosition(path, 7000);
+    const auto restore = qScopeGuard([this, path] { m_settings->clearVideoPosition(path); });
+    ViewerWindows viewers(*m_engine);
+    viewers.setPlacementQuery([](QObject*, HyprlandPlacement::Reply reply) { reply({}); });
+    QSignalSpy library(&viewers, &ViewerWindows::libraryRequested);
+    QQuickWindow* window = viewers.open({path});
+    QVERIFY(window);
+    const auto closeWindow = qScopeGuard([window] { window->close(); });
+    window->requestActivate();
+    QTRY_VERIFY(window->property("framed").toBool());
+    auto* player = window->findChild<QMediaPlayer*>(QStringLiteral("viewerPlayer"));
+    QVERIFY(player);
+    QTRY_VERIFY(window->property("resumeAvailable").toBool());
+    QTRY_COMPARE(player->playbackState(), QMediaPlayer::PausedState);
+    const auto named = [window](const QString& name) {
+      return find(window->contentItem(), [&name](QQuickItem* candidate) { return candidate->objectName() == name; });
+    };
+    QQuickItem* resume = named(QStringLiteral("viewerResumeButton"));
+    QVERIFY(resume);
+    QTRY_COMPARE(window->activeFocusItem(), resume);
+    QTest::keyClick(window, Qt::Key_Return);
+    QTRY_VERIFY(!window->property("resumeAvailable").toBool());
+    QTRY_COMPARE(player->playbackState(), QMediaPlayer::PlayingState);
+    QVERIFY2(player->position() >= 7000 && player->position() < 10000, qPrintable(QString::number(player->position())));
+    QCOMPARE(library.size(), 0);
+    QVERIFY(window->isVisible());
+    QTRY_COMPARE(window->activeFocusItem(), named(QStringLiteral("viewerKeys")));
+    player->pause();
   }
 
   // A video that opens before the window's first frame waits for that frame

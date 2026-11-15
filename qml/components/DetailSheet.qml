@@ -181,9 +181,16 @@ Item {
         ? Subtitles.textAt(externalSubtitle, Math.round(player.position) - root.subtitleOffsetMs)
         : ""
     }
-    readonly property string subtitleOverlayText: externalSubtitle !== ""
-        ? externalCueText
-        : (root.presentation ? root.presentation.subtitleText : "")
+    // Paused, the player draws no new cue: a track switched on or a seek
+    // shows the cue at the position from the track read with ffmpeg.
+    readonly property string subtitleOverlayText: {
+        if (externalSubtitle !== "") return externalCueText
+        void Subtitles.revision
+        if (player && player.playbackState !== MediaPlayer.PlayingState && player.activeSubtitleTrack >= 0
+                && Subtitles.embeddedReady(root.path, player.activeSubtitleTrack))
+            return Subtitles.embeddedTextAt(root.path, player.activeSubtitleTrack, Math.round(player.position))
+        return root.presentation ? root.presentation.subtitleText : ""
+    }
     readonly property bool hasSubtitleChoices: (player && player.subtitleTracks.length > 0)
                                                || subtitleFiles.length > 0
     readonly property string subtitleChoiceLabel: {

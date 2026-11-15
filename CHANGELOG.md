@@ -75,8 +75,9 @@
 - The viewer's resume prompt takes the keyboard as it appears: `Enter` or
   `Space` presses Resume, `Tab` moves to Start over, and `Escape` puts it
   away with the video paused. `Enter` no longer closes the viewer and opens
-  the library instead. The prompt sits on a solid panel that reads over any
-  frame, and the preview uses the same words, "Resume from 0:35" and "Start
+  the library instead, and a freshly opened viewer answers `Enter` too.
+  The prompt and both its buttons are solid, so they read over any frame,
+  and the preview uses the same words, "Resume from 0:35" and "Start
   over".
 - `Escape` in the preview's All actions menu hands focus to its button, so
   the next `Tab` moves on instead of opening the menu again. The menu lists
@@ -95,6 +96,13 @@
 - The PDF find and page fields keep their hints clear of the edges.
 - Corrections uses the rotate icons in a narrow window.
 - Compare says Fit while the pictures fit their cells, not 100%.
+- Subtitles switched on, changed or sought while a video is paused show the
+  cue at that spot at once, in the viewer and the preview, instead of only
+  once playback resumes.
+- The "Text results may be incomplete" note no longer covers the preview's
+  zoom bar; it shows with the grid only.
+- The preview's shortcut help lists Previous / next file as one row, as the
+  viewer's does.
 
 ## 1.19.1
 
