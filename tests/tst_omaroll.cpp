@@ -9933,6 +9933,29 @@ private slots:
       QVERIFY(rows->data(rows->index(8), SectionRows::MonthRole).toBool());
     }
 
+    // The date pill's months: day sections of one month merge, each with
+    // its first header row; the scrubber reads a row's month.
+    {
+      const QVariantList months = rows->months();
+      const QString thisKey = today.toString(QStringLiteral("yyyy-MM"));
+      QStringList keys;
+      for (const QVariant& value : months) keys.append(value.toMap().value(QStringLiteral("key")).toString());
+      QCOMPARE(keys.first(), thisKey);
+      QCOMPARE(keys.mid(keys.size() - 2), QStringList({QStringLiteral("2025-09"), QStringLiteral("2025-08")}));
+      const QVariantMap september = months.at(keys.indexOf(QStringLiteral("2025-09"))).toMap();
+      QCOMPARE(september.value(QStringLiteral("count")).toInt(), 4);
+      QCOMPARE(september.value(QStringLiteral("year")).toInt(), 2025);
+      QCOMPARE(september.value(QStringLiteral("label")).toString(),
+               locale.toString(QDate(2025, 9, 1), QStringLiteral("MMMM yyyy")));
+      const int header = september.value(QStringLiteral("headerRow")).toInt();
+      QCOMPARE(rows->headerRowOfMonth(QStringLiteral("2025-09")), header);
+      QVERIFY(rows->rowAt(header).value(QStringLiteral("header")).toBool());
+      QCOMPARE(rows->rowAt(header).value(QStringLiteral("first")).toInt(), 6);
+      QCOMPARE(rows->monthOfRow(header + 1).value(QStringLiteral("key")).toString(), QStringLiteral("2025-09"));
+      QCOMPARE(rows->headerRowOfMonth(QStringLiteral("1999-01")), -1);
+      QVERIFY(rows->monthOfRow(-1).isEmpty());
+    }
+
     // Narrow columns change the rows but not the sections.
     rows->setColumns(2);
     rows->rebuildNow();
