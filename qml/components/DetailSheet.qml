@@ -746,6 +746,10 @@ Item {
     }
 
     function dismissTransient() {
+        if (organizationChips.editing) {
+            if (!organizationChips.clearField()) focusPreview()
+            return true
+        }
         if (captionField.activeFocus) {
             captionField.text = root.caption
             captionField.focus = false
@@ -2819,6 +2823,14 @@ Item {
                         }
                     }
 
+                    OrganizationChips {
+                        id: organizationChips
+                        objectName: "previewOrganization"
+                        width: parent.width
+                        path: root.path
+                        onStatusRequested: function (message) { root.statusRequested(message) }
+                    }
+
                     // Technical details: codec, bitrate and stream lines,
                     // collapsed until asked for so the surface stays calm.
                     Column {
@@ -3234,6 +3246,16 @@ Item {
             root.actionNavigationActive = false
             root.showInfo = true
             captionField.forceActiveFocus()
+        }
+    }
+
+    Shortcut {
+        sequences: ShortcutCatalog.sequence("preview", "tag")
+        enabled: root.visible && !root.contextMenuOpen && root.enabled
+        onActivated: {
+            root.actionNavigationActive = false
+            root.showInfo = true
+            organizationChips.focusTagField()
         }
     }
 

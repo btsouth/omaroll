@@ -998,6 +998,7 @@ private slots:
         {"showHiddenToggle", "showHidden", "Hidden items", m_library},
         {"gridFilenamesToggle", "showGridFilenames", "Show filenames in grid", m_settings},
         {"pairRawJpegToggle", "pairRawJpeg", "Pair RAW and JPEG", m_settings},
+        {"readEmbeddedToggle", "readEmbeddedMetadata", "Read keywords and ratings from files", m_settings},
         {"permanentDeleteConfirmation", "confirmPermanentDelete", "Confirm permanent deletion", m_settings},
         {"enlargeSmallPicturesButton", "enlargeSmallPictures", "Enlarge small pictures to fit", m_settings},
         {"slideshowShuffleToggle", "slideshowShuffle", "Shuffle slideshow", m_settings},

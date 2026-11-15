@@ -627,6 +627,22 @@ Item {
                 }
 
                 SettingRow {
+                    title: "Read keywords and ratings from files"
+                    detail: "Tags, stars and captions other photo tools saved in files or .xmp sidecars. "
+                            + "Omaroll never changes them."
+                    toggle: embeddedToggle
+
+                    SettingSwitch {
+                        id: embeddedToggle
+                        objectName: "readEmbeddedToggle"
+                        accessibleName: "Read keywords and ratings from files"
+                        anchors.verticalCenter: parent.verticalCenter
+                        checked: Settings.readEmbeddedMetadata
+                        onToggled: Settings.readEmbeddedMetadata = !Settings.readEmbeddedMetadata
+                    }
+                }
+
+                SettingRow {
                     title: "Thumbnail cache"
                     detail: "Disk space for fast library previews."
 
