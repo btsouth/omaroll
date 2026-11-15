@@ -170,9 +170,13 @@ public:
     const bool early = startsAtBeginning();
     if (early) {
       // To the picture shown rather than the reported position, which can
-      // lag behind it and would take the picture back.
+      // lag behind it and would take the picture back. Positions are whole
+      // milliseconds and a seek to a frame's exact start can pick the one
+      // before it, so aim for the middle of the frame.
       const qint64 frameStart = m_frameStart.load(std::memory_order_relaxed);
-      m_player->setPosition(m_frameSeen && frameStart >= 0 ? frameStart / 1000 : m_player->position());
+      const qint64 frameEnd = std::max(frameStart, m_frameEnd.load(std::memory_order_relaxed));
+      m_player->setPosition(m_frameSeen && frameStart >= 0 ? (frameStart + frameEnd + 1000) / 2000
+                                                           : m_player->position());
     }
     // Audio-only media never delivers frames, so there is nothing to stall.
     if (!m_player->hasVideo() || m_player->playbackState() != QMediaPlayer::PlayingState) {
