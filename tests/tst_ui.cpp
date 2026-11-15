@@ -10067,13 +10067,19 @@ private slots:
     QCOMPARE(shownAt(last), lastRow);
     QVERIFY(inView(lastRow));
     QVERIFY(qAbs(list->property("contentY").toReal() - scrolled) < 1);
+    const qreal shownTop = lastRow->mapToItem(list, QPointF(0, 0)).y();
 
     // New rows, from a new tag, keep the view where it was.
     QVERIFY(m_settings->createTag(QStringLiteral("Scrollz/T40")));
     QTRY_VERIFY(collectionIndex("tag", "Scrollz/T40") > last);
     QTRY_VERIFY(pane->property("modelResets").toInt() > resets);
+    // Where the rows sit on screen is what counts: contentY itself can
+    // move with the list's origin when its rows are handed over.
     QTRY_VERIFY(inView(shownAt(last)));
-    QVERIFY(qAbs(list->property("contentY").toReal() - scrolled) < 1);
+    const qreal after = shownAt(last)->mapToItem(list, QPointF(0, 0)).y();
+    qInfo() << "last row at" << shownTop << "then" << after << "contentY" << scrolled << "then"
+            << list->property("contentY").toReal() << "originY" << list->property("originY").toReal();
+    QVERIFY(qAbs(after - shownTop) < 1);
   }
 
   // Up and Down walk both ways from All media through the pinned folders
