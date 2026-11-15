@@ -125,8 +125,10 @@ FocusScope {
             const offset = within - root.sections.rowY(row, root.headerHeight, root.cellHeight)
             list.contentY = (item ? item.y : list.contentY) + offset
         }
-        root.scrolling = false
+        // Still scrolling while the offset is read back: the scrollbar's
+        // position follows it, and a drag must not take that as a new drag.
         root.updateExactTop()
+        root.scrolling = false
     }
 
     Binding { target: root.sections; property: "active"; value: root.visible }
