@@ -377,10 +377,19 @@ FocusScope {
         width: 12
         hoverEnabled: true
         size: list.height / Math.max(root.exactHeight, 1)
-        position: root.exactTop / Math.max(root.exactHeight, 1)
         onPositionChanged: {
             if (pressed && !root.scrolling) root.scrollToExact(position * root.exactHeight)
         }
+    }
+    // The thumb follows the list except while it is held, when the drag
+    // moves the list instead. Bound while held, a list move wrote the
+    // position, scrolled from its change and re-entered the binding.
+    Binding {
+        target: scrollbar
+        property: "position"
+        value: root.exactTop / Math.max(root.exactHeight, 1)
+        when: !scrollbar.pressed
+        restoreMode: Binding.RestoreNone
     }
 
     // The date scrubber, for the mouse: in a date sort the scrollbar marks

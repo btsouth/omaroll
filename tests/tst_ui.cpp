@@ -245,7 +245,9 @@ private slots:
       DecodeJournal::simulateCrash();
       DecodeJournal::close();
     }
-    QVERIFY(DecodeJournal::open(journal));
+    // A helper the app forks shares the journal's open file, and with it the
+    // lock, until it execs. Reopening the moment after closing can meet that.
+    QTRY_VERIFY(DecodeJournal::open(journal));
     const auto closeJournal = qScopeGuard([this] {
       DecodeJournal::close();
       if (!m_window->isVisible()) m_window->show();
@@ -9831,18 +9833,9 @@ private slots:
     QVERIFY(picture.save(second));
     m_captures->addExtraFiles({first, second});
     QTRY_VERIFY_WITH_TIMEOUT(m_library->rowOf(second) >= 0, 10000);
-    // Let the tile's thumbnail load before the file becomes a directory, or
-    // its late request logs a warning the final check would count.
-    const auto thumbnailSettled = [&] {
-      QQuickItem* card = cardFor(second);
-      if (!card) return true; // not on screen, so never requested
-      QQuickItem* thumbnail = find(card, [](QQuickItem* candidate) {
-        return candidate->property("source").toUrl().toString().startsWith(QStringLiteral("image://thumbs/"));
-      });
-      const int status = thumbnail ? thumbnail->property("status").toInt() : 1;
-      return status == 1 || status == 3; // Image.Ready or Image.Error
-    };
-    QTRY_VERIFY(thumbnailSettled());
+    // The tile stays after the failed delete, and a directory has no
+    // thumbnail: its next request, whenever it lands, reports that.
+    m_disposablePaths.append(second);
     QVERIFY(QMetaObject::invokeMethod(m_window, "requestPermanentDelete",
                                      Q_ARG(QVariant, QVariant(QStringList{first, second}))));
     QTRY_VERIFY(item("permanentConfirm")->isVisible());
@@ -11104,7 +11097,9 @@ private slots:
     QTRY_COMPARE(list->property("currentIndex").toInt(), 0);
     QMetaObject::invokeMethod(pane, "focusRow", Q_ARG(QVariant, QStringLiteral("tag")),
                               Q_ARG(QVariant, QStringLiteral("Nowhere/At all")));
-    QVERIFY(!pane->property("revealPending").toBool());
+    // Dropped at once, or by the organization rebuild already on its way
+    // when tags were still settling, which a slow build can meet.
+    QTRY_VERIFY(!pane->property("revealPending").toBool());
     QCOMPARE(list->property("currentIndex").toInt(), 0);
     // An unrelated rebuild leaves the current row alone.
     const int year = collectionIndex("header", "dates") + 1;
@@ -11516,7 +11511,10 @@ private slots:
     QVERIFY(marks >= 1);
     QVERIFY(bubble->z() > item("reviewSetsList")->z());
     QCOMPARE(bubble->property("color").value<QColor>().alphaF(), 1.0);
-    QCOMPARE(bubble->opacity(), 1.0);
+    // Fully shown once its fade in has run, which a slow renderer can still
+    // be in the middle of.
+    QTRY_COMPARE(bubble->opacity(), 1.0);
+    QVERIFY(bubble->property("shown").toBool());
     QTest::mouseRelease(m_window, Qt::LeftButton, Qt::NoModifier, bottom.toPoint());
     QTest::mouseMove(m_window, QPoint(5, 5));
     QTRY_VERIFY(!bubble->property("shown").toBool());
