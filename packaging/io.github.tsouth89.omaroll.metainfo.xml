@@ -55,6 +55,18 @@
     </screenshot>
   </screenshots>
   <releases>
+    <release version="1.20.0" date="2026-11-16">
+      <description>
+        <p>Albums, tags and dates in the sidebar, and tags and albums edited where you look at a file.</p>
+        <ul>
+          <li>The sidebar lists albums, tags and dates, and Jump to date and a date scrubber move through a large library</li>
+          <li>Add and remove tags and albums from the preview, the viewer and Organize, with undo</li>
+          <li>Typing a tag stays fast with hundreds of tags</li>
+          <li>The video resume prompt works from the keyboard in the viewer</li>
+          <li>The first picture shows sooner at launch</li>
+        </ul>
+      </description>
+    </release>
     <release version="1.19.1" date="2026-11-15">
       <description>
         <p>Fixes for menus, tooltips, the PDF preview and video details.</p>
