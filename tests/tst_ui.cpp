@@ -11097,7 +11097,9 @@ private slots:
     QTRY_COMPARE(list->property("currentIndex").toInt(), 0);
     QMetaObject::invokeMethod(pane, "focusRow", Q_ARG(QVariant, QStringLiteral("tag")),
                               Q_ARG(QVariant, QStringLiteral("Nowhere/At all")));
-    QVERIFY(!pane->property("revealPending").toBool());
+    // Dropped at once, or by the organization rebuild already on its way
+    // when tags were still settling, which a slow build can meet.
+    QTRY_VERIFY(!pane->property("revealPending").toBool());
     QCOMPARE(list->property("currentIndex").toInt(), 0);
     // An unrelated rebuild leaves the current row alone.
     const int year = collectionIndex("header", "dates") + 1;
