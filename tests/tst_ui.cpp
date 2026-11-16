@@ -377,6 +377,63 @@ private slots:
     QVERIFY(report.contains(QStringLiteral("ffmpeg: ")));
   }
 
+  // Filtering keeps the sheet where it opened: its title and field do not
+  // move with every key, and its width stays the same.
+  void helpStaysStillWhileFiltering() {
+    const auto restoreSize = qScopeGuard([&] { m_window->resize(1280, 820); });
+    m_window->resize(780, 900);
+    QTRY_COMPARE(m_window->width(), 780);
+    QObject* popup = m_window->findChild<QObject*>(QStringLiteral("libraryShortcutHelp"));
+    QVERIFY(popup);
+    QTest::keyClick(m_window, Qt::Key_F1);
+    QTRY_VERIFY(popup->property("opened").toBool());
+    const auto close = qScopeGuard([&] {
+      popup->setProperty("filter", QString());
+      QTest::keyClick(m_window, Qt::Key_Escape);
+    });
+    QQuickItem* field = find(popup->property("contentItem").value<QQuickItem*>(), [](QQuickItem* candidate) {
+      return candidate->objectName() == QStringLiteral("shortcutFilter");
+    });
+    QVERIFY(field);
+    const QRectF before = field->mapRectToScene(field->boundingRect());
+    const qreal width = popup->property("width").toReal();
+    for (const char character : QByteArray("trash")) QTest::keyClick(m_window, character);
+    QTRY_COMPARE(popup->property("filter").toString(), QStringLiteral("trash"));
+    QTest::qWait(50);
+    const QRectF after = field->mapRectToScene(field->boundingRect());
+    QVERIFY2(qAbs(after.top() - before.top()) < 0.5 && qAbs(after.left() - before.left()) < 0.5,
+             qPrintable(QStringLiteral("%1,%2 -> %3,%4").arg(before.left()).arg(before.top())
+                            .arg(after.left()).arg(after.top())));
+    QCOMPARE(popup->property("width").toReal(), width);
+    for (const char character : QByteArray("zzzz")) QTest::keyClick(m_window, character);
+    QTest::qWait(50);
+    QCOMPARE(field->mapRectToScene(field->boundingRect()).top(), after.top());
+  }
+
+  // A focused switch draws a ring outside its track, in the accent, so it
+  // shows on an "on" switch filled with the accent as well as an off one.
+  void settingSwitchFocusRingClearsTheTrack() {
+    QVERIFY(QMetaObject::invokeMethod(item("settingsSheet"), "open"));
+    const auto close = qScopeGuard([&] { invoke("dismissTopLayer"); });
+    QQuickItem* toggle = find(item("settingsSheet"), [](QQuickItem* candidate) {
+      return candidate->property("accessibleName").toString() == QStringLiteral("Include Downloads")
+             && candidate->property("checked").isValid();
+    });
+    QVERIFY(toggle);
+    toggle->forceActiveFocus(Qt::TabFocusReason);
+    QQuickItem* ring = find(toggle, [](QQuickItem* candidate) {
+      return candidate->objectName() == QStringLiteral("settingSwitchFocus");
+    });
+    QVERIFY(ring);
+    QTRY_VERIFY(ring->isVisible());
+    QVERIFY(ring->x() < 0 && ring->x() + ring->width() > toggle->width());
+    QVERIFY(ring->y() < 0 && ring->y() + ring->height() > toggle->height());
+    QCOMPARE(ring->property("border").value<QObject*>()->property("width").toReal(), 2.0);
+    toggle->setFocus(false);
+    item("settingsSheet")->forceActiveFocus();
+    QTRY_VERIFY(!ring->isVisible());
+  }
+
   void libraryHelpCapsStayInTheirColumn() {
     const auto restoreSize = qScopeGuard([&] { m_window->resize(1280, 820); });
     m_window->resize(1280, 820);
@@ -497,6 +554,17 @@ private slots:
     check();
     QVERIFY(labels().contains(QStringLiteral("Add background")));
     QVERIFY(labels().contains(QStringLiteral("Fit picture / PDF")));
+    // Left and Right share one row, as in the viewer's help.
+    QCOMPARE(labels().count(QStringLiteral("Previous / next file")), 1);
+    QVERIFY(!labels().contains(QStringLiteral("Previous file")));
+    QVERIFY(!labels().contains(QStringLiteral("Next file")));
+    for (const QVariant& group : groups()) {
+      for (const QVariant& row : group.toMap().value(QStringLiteral("rows")).toList()) {
+        const QVariantMap map = row.toMap();
+        if (map.value(QStringLiteral("label")).toString() == QStringLiteral("Previous / next file"))
+          QCOMPARE(map.value(QStringLiteral("caps")).toList().size(), 2);
+      }
+    }
     QVERIFY(!labels().contains(QStringLiteral("Mute")));
     QVERIFY(!labels().contains(QStringLiteral("Volume up / down")));
     QTest::keyClick(m_window, Qt::Key_Escape);
@@ -4046,6 +4114,20 @@ private slots:
         }
       }
     }
+    // Narrow, the rotate buttons show the toolbars' rotate icons rather than
+    // arrow characters too small to read, and keep their names.
+    for (const auto& [name, icon] : {std::pair{"correctionRotateLeft", "rotate-left"},
+                                     std::pair{"correctionRotateRight", "rotate-right"}}) {
+      QQuickItem* button = find(sheet, [&](QQuickItem* candidate) {
+        return candidate->objectName() == QLatin1String(name);
+      });
+      QVERIFY(button);
+      QTRY_COMPARE(button->property("icon").toString(), QString::fromLatin1(icon));
+      QCOMPARE(button->property("accessibleName").toString(),
+               QString::fromLatin1(icon) == QLatin1String("rotate-left") ? QStringLiteral("Rotate left")
+                                                                        : QStringLiteral("Rotate right"));
+      QVERIFY(button->width() >= 26);
+    }
   }
 
   void correctionSheetCopiesTheSelectedRegion() {
@@ -6657,7 +6739,9 @@ private slots:
   }
 
   // Tab opens the otherwise hidden action menu; arrows move through available
-  // rows, Escape closes it and hands focus back without closing the preview.
+  // rows, Escape closes it and hands focus to its button without closing the
+  // preview. The next Tab moves on from the button instead of opening the
+  // menu again.
   void hiddenActionMenuNavigatesAndEscapeReturnsToPreview() {
     QQuickItem* detail = item("detail");
     openDetail(0);
@@ -6678,9 +6762,26 @@ private slots:
     QTest::keyClick(m_window, Qt::Key_Escape);
     QTRY_VERIFY(!detail->property("actionNavigationActive").toBool());
     QVERIFY(detail->isVisible());
-    QTRY_VERIFY(detail->hasActiveFocus());
+    QQuickItem* overflow = item("viewerOverflowButton");
+    QTRY_VERIFY(overflow->hasActiveFocus());
     QVERIFY(!item("viewerActionPopup")->isVisible());
 
+    QTest::keyClick(m_window, Qt::Key_Tab);
+    QTest::qWait(50);
+    QVERIFY(!item("viewerActionPopup")->isVisible());
+    QVERIFY(!detail->property("actionNavigationActive").toBool());
+    QVERIFY(!overflow->hasActiveFocus());
+    QVERIFY(detail->isVisible());
+
+    // Enter on the button opens the menu; a second Escape and the click
+    // outside still leave the preview open.
+    overflow->forceActiveFocus();
+    QTest::keyClick(m_window, Qt::Key_Return);
+    QTRY_VERIFY(item("viewerActionPopup")->isVisible());
+    QTRY_COMPARE(activeViewerAction()->objectName(), QStringLiteral("viewerAction_copy"));
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(overflow->hasActiveFocus());
+    detail->forceActiveFocus();
     QTest::keyClick(m_window, Qt::Key_Tab);
     QTRY_VERIFY(item("viewerActionPopup")->isVisible());
     const bool favourite = detail->property("favorite").toBool();
@@ -6698,6 +6799,43 @@ private slots:
     QTRY_COMPARE(detail->property("favorite").toBool(), !favourite);
     QVERIFY(detail->isVisible());
     m_settings->setFavorite({pathAt(0)}, favourite);
+  }
+
+  // The All actions menu heads each group once, File included, and is as
+  // tall as its rows where the window has room, so nothing is cut at the
+  // bottom of a 780 px window.
+  void previewActionMenuGroupsOnceAndFits() {
+    const auto restoreSize = qScopeGuard([&] { m_window->resize(1280, 820); });
+    m_window->resize(780, 900);
+    QTRY_COMPARE(m_window->width(), 780);
+    QQuickItem* detail = item("detail");
+    openDetail(0);
+    QTRY_VERIFY(detail->isVisible());
+    QTest::keyClick(m_window, Qt::Key_Tab);
+    QQuickItem* popup = item("viewerActionPopup");
+    QTRY_VERIFY(popup->isVisible());
+    QQuickItem* actions = item("viewerActions");
+    QStringList runs;
+    for (const QVariant& row : actions->property("model").toList()) {
+      const QString group = row.toMap().value(QStringLiteral("group")).toString();
+      if (runs.isEmpty() || runs.last() != group) runs.append(group);
+    }
+    QVERIFY(runs.contains(QStringLiteral("File")));
+    QCOMPARE(runs.removeDuplicates(), 0);
+    // The copy rows sit with the other File rows.
+    QQuickItem* copyPath = item("viewerAction_copy-path");
+    QVERIFY(copyPath);
+    // As tall as the rows, or as the room under the header when they need
+    // more: no longer held to 380 px with room to spare.
+    const qreal content = actions->property("contentHeight").toReal();
+    QQuickItem* panel = popup->parentItem();
+    const qreal room = panel->height() - 62;
+    QTRY_VERIFY2(popup->height() >= std::min(content + 12, room) - 1,
+                 qPrintable(QStringLiteral("%1 < min(%2, %3)").arg(popup->height()).arg(content + 12).arg(room)));
+    QVERIFY(popup->height() > 380 || content + 12 <= 380);
+    QVERIFY(popup->mapRectToScene(popup->boundingRect()).bottom() <= detail->mapRectToScene(detail->boundingRect()).bottom());
+    QTest::keyClick(m_window, Qt::Key_Escape);
+    QTRY_VERIFY(!popup->isVisible());
   }
 
   // Escape while editing a caption reverts the text and keeps the preview open.
@@ -6899,6 +7037,29 @@ private slots:
     QVERIFY(m_library->searchText().isEmpty());
     QTRY_VERIFY(m_library->count() > 2);
     QTRY_VERIFY(item("library")->property("layoutReady").toBool());
+  }
+
+  // The "Text results may be incomplete" note belongs to the grid: it goes
+  // while the preview is open rather than covering the preview's controls.
+  void textNoticeStaysOffThePreview() {
+    if (!m_textIndex->available()) QSKIP("Text reading is unavailable");
+    const QString name = QFileInfo(pathAt(0)).completeBaseName();
+    m_library->setSearchText(name);
+    const auto cleanup = qScopeGuard([&] {
+      invoke("dismissTopLayer");
+      m_library->setSearchText({});
+    });
+    QTRY_VERIFY(m_library->count() > 0);
+    QQuickItem* notice = item("textSearchNoticeBox");
+    QVERIFY(notice);
+    if (!notice->property("wanted").toBool()) QSKIP("Every picture's text is already read");
+    QTRY_VERIFY(notice->isVisible());
+    openDetail(0);
+    QTRY_VERIFY(item("detail")->isVisible());
+    QTRY_VERIFY(!notice->isVisible());
+    invoke("dismissTopLayer");
+    QTRY_VERIFY(!item("detail")->isVisible());
+    QTRY_VERIFY(notice->isVisible());
   }
 
   // The text notice's settings link works from the keyboard: Tab reaches
@@ -8326,6 +8487,15 @@ private slots:
     QVERIFY(!copySelection->isVisible());
     QVERIFY(item("pdfPageRow")->isVisible());
     QVERIFY(selectText->isVisible());
+    // The narrow find field's hint fits inside it with room at both ends.
+    {
+      QQuickItem* hint = item("pdfSearchHint");
+      QTRY_VERIFY(hint->isVisible());
+      QTRY_COMPARE(hint->property("text").toString(), QStringLiteral("Find text"));
+      QTRY_VERIFY2(hint->implicitWidth() <= hint->width() + 0.5,
+                   qPrintable(QStringLiteral("%1 > %2").arg(hint->implicitWidth()).arg(hint->width())));
+      QVERIFY(hint->x() >= 8 && hint->x() + hint->width() <= hint->parentItem()->width() - 8);
+    }
 
     // A wide window keeps every control, in any font metric: the labels are the
     // first thing to shorten, and nothing is dropped until even those do not fit.
@@ -8334,6 +8504,12 @@ private slots:
     QTRY_VERIFY(pageInput->isVisible());
     QVERIFY(selectText->isVisible());
     QVERIFY(copySelection->isVisible());
+    // The page box's hint has room either side of it.
+    {
+      QQuickItem* hint = item("pdfPageHint");
+      QTRY_VERIFY(hint->isVisible());
+      QVERIFY(hint->x() >= 8 && hint->x() + hint->width() <= hint->parentItem()->width() - 8);
+    }
 
     // The fitted page carries the same edge over the page sheet.
     clickSettled(item("pdfFitPage"));
@@ -11981,6 +12157,23 @@ private slots:
         const QRectF buttonBounds = button->mapRectToScene(button->boundingRect());
         QVERIFY(bounds.contains(buttonBounds));
       }
+    }
+    // The same words as the viewer's prompt.
+    QCOMPARE(item("resumeButton")->property("label").toString(), QStringLiteral("Resume from 0:07"));
+    QCOMPARE(item("restartVideoButton")->property("label").toString(), QStringLiteral("Start over"));
+    // Beside the transport, Fullscreen lines up with the bar: same top and
+    // bottom, and one outline rather than a pill inside a frame.
+    {
+      QQuickItem* panel = item("previewTopControlsPanel");
+      QQuickItem* bar = item("previewTransportPanel");
+      QTRY_VERIFY(panel->isVisible() && bar->isVisible());
+      QVERIFY(!panel->property("stacked").toBool());
+      const QRectF panelBounds = panel->mapRectToScene(panel->boundingRect());
+      const QRectF barBounds = bar->mapRectToScene(bar->boundingRect());
+      QVERIFY2(qAbs(panelBounds.top() - barBounds.top()) < 0.5 && qAbs(panelBounds.bottom() - barBounds.bottom()) < 0.5,
+               qPrintable(QStringLiteral("%1..%2 vs %3..%4").arg(panelBounds.top()).arg(panelBounds.bottom())
+                              .arg(barBounds.top()).arg(barBounds.bottom())));
+      QVERIFY(item("previewFullscreenPill")->property("segment").toBool());
     }
     click(item("resumeButton"));
     QTRY_VERIFY(!detail->property("resumeAvailable").toBool());

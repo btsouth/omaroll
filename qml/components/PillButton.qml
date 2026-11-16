@@ -67,15 +67,22 @@ Item {
         anchors.fill: parent
         anchors.margins: root.segment ? 2 : 0
         radius: Theme.cornerRadius > 0 ? Math.max(2, Theme.cornerRadius - (root.segment ? 2 : 0)) : 3
+        // Over a picture or video every pill is solid, chosen or not, so a
+        // bright frame cannot show through its text.
         color: root.active
-               ? root.shade(root.accentColour, root.floating ? 0.42 : 0.18)
+               ? (root.floating && root.osd ? Osd.over(root.shade(root.accentColour, 0.42), Osd.panelSolid)
+                                            : root.shade(root.accentColour, root.floating ? 0.42 : 0.18))
                : (root.floating
-                  ? (root.osd ? root.shade(Osd.panel, hover.hovered ? 0.96 : 0.84)
+                  ? (root.osd ? (hover.hovered ? Osd.over(Osd.hover, Osd.panelSolid) : Osd.panelSolid)
                               : root.shade(Theme.background, hover.hovered ? 0.92 : 0.72))
                   : root.shade(root.textColour, hover.hovered ? 0.09 : 0.0))
         border.width: root.activeFocus ? 2 : (root.segment && !root.active ? 0 : 1)
+        // A chosen button with the keyboard on it still shows the focus:
+        // its outline is already the accent, so focus draws in the bright
+        // text colour instead.
         border.color: root.active
-                      ? root.shade(root.accentColour, root.floating ? 0.90 : 0.55)
+                      ? (root.activeFocus ? root.brightColour
+                                          : root.shade(root.accentColour, root.floating ? 0.90 : 0.55))
                       : root.activeFocus
                         ? root.accentColour
                         : root.shade(root.textColour,

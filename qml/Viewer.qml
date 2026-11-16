@@ -226,13 +226,18 @@ ApplicationWindow {
     property var subtitleFiles: []
     property string externalSubtitle: ""
     property int subtitleChoice: 0
+    // The embedded track chosen here, -1 for none. Kept beside the player's
+    // own, which does not always say when it changes.
+    property int subtitleTrack: -1
     property int subtitleOffsetMs: 0
     readonly property bool hasAudioChoices: root.player && root.player.audioTracks.length > 1
     readonly property string subtitleText: {
         void Subtitles.revision
-        return externalSubtitle !== "" && player
-        ? Subtitles.textAt(externalSubtitle, Math.round(player.position) - root.subtitleOffsetMs)
-        : (root.presentation ? root.presentation.subtitleText : "")
+        if (externalSubtitle !== "" && player)
+            return Subtitles.textAt(externalSubtitle, Math.round(player.position) - root.subtitleOffsetMs)
+        // Off: nothing, even if the player still holds the last cue it drew.
+        if (root.subtitleTrack < 0) return ""
+        return root.presentation ? root.presentation.subtitleText : ""
     }
 
     readonly property bool favorite: { void root.marksVersion; return Settings.isFavorite(Session.path) }
@@ -276,7 +281,8 @@ ApplicationWindow {
         // Only the window's own controls and the picture: a prompt can take
         // the keyboard before blockingActionOpen has caught up with it.
         if (root.activeFocusItem !== null && !root.blockingActionOpen
-                && (root.activeFocusItem === keys || root.focusInside(root.activeFocusItem)))
+                && (root.activeFocusItem === keys || root.focusInside(root.activeFocusItem)
+                    || resumeRow.activeFocusInside))
             root.focusOutsidePrompts = root.activeFocusItem
         Qt.callLater(root.reclaimFocus)
     }
@@ -285,10 +291,18 @@ ApplicationWindow {
     // otherwise the picture does. Taken as the prompt opens: while it
     // closes, focus passes through other items first.
     property Item focusOutsidePrompts: null
+    // Set as the resume prompt goes with the keyboard on it, until the key
+    // that answered it is let go (ViewerKeys).
+    property bool promptKeyHeld: false
     property Item focusBeforePrompt: null
     function restoreFocusAfterPrompt() {
         const at = root.focusBeforePrompt
-        if (at && at !== keys && at.visible && at.enabled && root.focusInside(at)) {
+        // A resume prompt still showing gets the keyboard back, on the
+        // choice that had it, so Enter answers it rather than opening the
+        // library.
+        if (resumePrompt.visible && !root.sheetOpen) {
+            (at === restartButton ? restartButton : resumeButton).forceActiveFocus(Qt.OtherFocusReason)
+        } else if (at && at !== keys && at.visible && at.enabled && root.focusInside(at)) {
             at.forceActiveFocus(Qt.OtherFocusReason)
         } else {
             keys.forceActiveFocus()
@@ -831,7 +845,19 @@ ApplicationWindow {
             return
         }
         root.seekTo(root.resumePosition)
+        // A file stepped to can still be loading when Resume is pressed, and
+        // a seek sent then is lost. Kept as the target, it is sent again
+        // once playback shows it did not land.
+        root.player.launchTarget = Math.round(root.resumePosition)
+        root.player.launchRetries = 0
         root.player.play()
+    }
+
+    // The resume prompt put away without an answer: the video stays paused
+    // where it opened, and the saved spot is kept for next time.
+    function dismissResume() {
+        root.resumeAvailable = false
+        root.resumePending = false
     }
 
     function restartVideo() {
@@ -920,6 +946,7 @@ ApplicationWindow {
         const subtitleTrack = choice.kind === "embedded" ? choice.index : -1
         const trackChanged = root.player.activeSubtitleTrack !== subtitleTrack
         root.player.activeSubtitleTrack = subtitleTrack
+        root.subtitleTrack = subtitleTrack
         if (trackChanged && root.presentation) root.presentation.trackChanged()
         root.externalSubtitle = choice.kind === "external" ? choice.path : ""
         root.say(choice.kind === "off" ? "Subtitles off" : "Subtitles: " + choice.label)
@@ -1564,6 +1591,7 @@ ApplicationWindow {
             root.resumePending = true
             root.externalSubtitle = ""
             root.subtitleChoice = 0
+            root.subtitleTrack = -1
             root.subtitleOffsetMs = 0
             if (Session.isVideo) {
                 Qt.callLater(root.startPlayer)
@@ -2388,14 +2416,40 @@ ApplicationWindow {
             }
         }
 
-        // A saved spot is offered rather than jumped to.
-        Item {
+        // A saved spot is offered rather than jumped to. The prompt takes the
+        // keyboard while it shows, so Enter answers it rather than reaching
+        // a viewer shortcut, and hands it back to the picture afterwards.
+        Rectangle {
             id: resumePrompt
             objectName: "viewerResumePrompt"
             anchors.centerIn: parent
-            width: resumeRow.implicitWidth
-            height: resumeRow.implicitHeight
+            width: resumeRow.implicitWidth + 16
+            height: resumeRow.implicitHeight + 16
+            // Solid, like the notices, so it reads over any frame.
+            radius: Theme.cornerRadius > 0 ? Theme.cornerRadius + 2 : 4
+            color: Osd.panelSolid
+            border.width: 1
+            border.color: Osd.border
             visible: Session.isVideo && root.resumeAvailable && !root.slideshowRunning
+            Accessible.role: Accessible.Grouping
+            Accessible.name: "Resume where you left off"
+            onVisibleChanged: {
+                if (visible) {
+                    Qt.callLater(resumePrompt.takeFocus)
+                } else if (resumeRow.activeFocusInside) {
+                    // The key that answered may still be held: its repeats
+                    // must not go on to open the library or pause.
+                    root.promptKeyHeld = true
+                    keys.forceActiveFocus()
+                }
+            }
+            function takeFocus() {
+                if (resumePrompt.visible && !root.blockingActionOpen && !root.sheetOpen)
+                    resumeButton.forceActiveFocus(Qt.OtherFocusReason)
+            }
+            // The prompt's own keys stop in its row; every other key is the
+            // viewer's, so F11 and the rest still work.
+            Keys.forwardTo: [keys]
 
             MouseArea {
                 anchors.fill: parent
@@ -2404,9 +2458,41 @@ ApplicationWindow {
 
             Row {
                 id: resumeRow
+                readonly property bool activeFocusInside: resumeButton.activeFocus || restartButton.activeFocus
+                // Tab moves between the two, Enter and Space press the
+                // focused one and never reach Open in library, Escape leaves
+                // the video paused at the start, and Left and Right step to
+                // the next file rather than stopping at the prompt.
+                function ownKey(event) {
+                    if ((event.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier)) !== 0)
+                        return false
+                    return [Qt.Key_Tab, Qt.Key_Backtab, Qt.Key_Escape, Qt.Key_Return, Qt.Key_Enter,
+                            Qt.Key_Space, Qt.Key_Left, Qt.Key_Right].indexOf(event.key) >= 0
+                }
+                Keys.onPressed: function (event) {
+                    if (!resumeRow.ownKey(event)) {
+                        event.accepted = false
+                        return
+                    }
+                    if (event.key === Qt.Key_Tab || event.key === Qt.Key_Backtab) {
+                        (resumeButton.activeFocus ? restartButton : resumeButton).forceActiveFocus(Qt.TabFocusReason)
+                    } else if (event.key === Qt.Key_Escape) {
+                        root.dismissResume()
+                    } else if (event.key === Qt.Key_Left || event.key === Qt.Key_Right) {
+                        root.step(event.key === Qt.Key_Left ? -1 : 1)
+                    }
+                    event.accepted = true
+                }
+                Keys.onReleased: function (event) { event.accepted = resumeRow.ownKey(event) }
+                Keys.onShortcutOverride: function (event) { event.accepted = resumeRow.ownKey(event) }
+                anchors.centerIn: parent
                 spacing: 8
 
                 PillButton {
+                    id: resumeButton
+                    // Out of the window's Tab chain: Qt would move Tab along
+                    // it before the prompt's own keys could keep it here.
+                    activeFocusOnTab: false
                     objectName: "viewerResumeButton"
                     label: "Resume from " + transport.clock(root.resumePosition)
                     floating: true
@@ -2415,6 +2501,10 @@ ApplicationWindow {
                     onClicked: root.resumeVideo()
                 }
                 PillButton {
+                    id: restartButton
+                    // Out of the window's Tab chain: Qt would move Tab along
+                    // it before the prompt's own keys could keep it here.
+                    activeFocusOnTab: false
                     objectName: "viewerRestartButton"
                     label: "Start over"
                     floating: true
@@ -2734,12 +2824,20 @@ ApplicationWindow {
     Rectangle {
         id: toast
         objectName: "viewerStatus"
-        anchors.horizontalCenter: parent.horizontalCenter
-        anchors.top: parent.top
-        anchors.topMargin: 58
         readonly property bool undoable: root.undoId > 0 && root.undoId === Settings.latestUndoId
-        width: Math.min(toastText.implicitWidth + 28
-                        + (undoable ? undoButton.implicitWidth - 6 : 0), parent.width - 48)
+        // Beside the details while they are open, not under them, so the
+        // message and its Undo stay in sight and in reach. A window too
+        // narrow for that puts it under the details, across the window,
+        // and over their foot when they reach the bottom.
+        readonly property real sideRoom: infoPanel.visible ? infoPanel.x - 8 : parent.width
+        readonly property bool beside: !infoPanel.visible || sideRoom - 32 >= 200
+        readonly property real room: beside ? sideRoom : parent.width
+        x: Math.round((room - width) / 2)
+        y: beside ? 58 : Math.max(58, Math.min(infoPanel.y + infoPanel.height + 8,
+                                               infoPanel.bottomLimit - height))
+        z: beside ? 0 : 1
+        width: Math.max(0, Math.min(toastText.implicitWidth + 28
+                                    + (undoable ? undoButton.implicitWidth - 6 : 0), room - 32))
         // Tall enough for Undo to be a whole button, not a word to aim at.
         height: Math.max(toastText.implicitHeight + 14, undoable ? undoButton.implicitHeight : 0)
         // Read out as it appears, the way a notification is.
@@ -2763,6 +2861,10 @@ ApplicationWindow {
             anchors.verticalCenter: parent.verticalCenter
             width: Math.min(implicitWidth, parent.width - 28
                             - (toast.undoable ? undoButton.implicitWidth - 6 : 0))
+            // A narrow toast beside the details wraps rather than losing
+            // what it says.
+            wrapMode: Text.Wrap
+            maximumLineCount: 3
             elide: Text.ElideRight
             text: root.status
             font.family: Theme.fontFamily
@@ -2877,7 +2979,16 @@ ApplicationWindow {
         anchors.right: parent.right
         anchors.topMargin: 58
         anchors.rightMargin: 14
-        height: Math.min(implicitHeight, Math.max(0, parent.height - y - 16))
+        // Clear of the toolbar, transport and filmstrip under it: a long
+        // list of tags scrolls inside the panel instead.
+        readonly property real bottomLimit: {
+            let bottom = parent.height - 16
+            for (const bar of [toolbar, transport, filmstrip]) {
+                if (bar.visible && bar.x + bar.width > x) bottom = Math.min(bottom, bar.y - 8)
+            }
+            return bottom
+        }
+        height: Math.min(implicitHeight, Math.max(0, bottomLimit - y))
         visible: root.infoOpen
         fileName: Session.fileName
         folder: Session.folder

@@ -643,14 +643,20 @@ Item {
                 GroupLabel {
                     text: "Rotate"
                 }
+                // Narrow: the toolbars' rotate icons, which read at this size
+                // where the arrow characters did not.
                 PillButton {
                     id: rotateLeft
-                    label: controls.compact ? "↺" : "Rotate left"
+                    objectName: "correctionRotateLeft"
+                    label: "Rotate left"
+                    icon: controls.compact ? "rotate-left" : ""
                     toolTip: "Rotate left"
                     onClicked: root.rotate(-1)
                 }
                 PillButton {
-                    label: controls.compact ? "↻" : "Rotate right"
+                    objectName: "correctionRotateRight"
+                    label: "Rotate right"
+                    icon: controls.compact ? "rotate-right" : ""
                     toolTip: "Rotate right"
                     onClicked: root.rotate(1)
                 }

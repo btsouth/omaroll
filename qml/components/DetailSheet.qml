@@ -168,6 +168,9 @@ Item {
     property var subtitleFiles: []
     property string externalSubtitle: ""
     property int subtitleChoice: 0
+    // The embedded track chosen here, -1 for none. Kept beside the player's
+    // own, which does not always say when it changes.
+    property int subtitleTrack: -1
     // The audio track in use, kept here: the ffmpeg backend does not signal
     // a track change, so a binding on the player's own index stays at the -1
     // it read before the file loaded ("Audio 0").
@@ -181,9 +184,12 @@ Item {
         ? Subtitles.textAt(externalSubtitle, Math.round(player.position) - root.subtitleOffsetMs)
         : ""
     }
-    readonly property string subtitleOverlayText: externalSubtitle !== ""
-        ? externalCueText
-        : (root.presentation ? root.presentation.subtitleText : "")
+    readonly property string subtitleOverlayText: {
+        if (externalSubtitle !== "") return externalCueText
+        // Off: nothing, even if the player still holds the last cue it drew.
+        if (root.subtitleTrack < 0) return ""
+        return root.presentation ? root.presentation.subtitleText : ""
+    }
     readonly property bool hasSubtitleChoices: (player && player.subtitleTracks.length > 0)
                                                || subtitleFiles.length > 0
     readonly property string subtitleChoiceLabel: {
@@ -225,6 +231,7 @@ Item {
         && stage.width < 24 + pdfPageMeasure.implicitWidth
     readonly property bool narrowPdfPage: root.compactPdfPage
         && stage.width < 24 + pdfPageGlyphMeasure.implicitWidth
+    readonly property real pdfPageBoxWidth: Math.max(54, Math.ceil(pdfPageHintMetrics.advanceWidth) + 24)
     readonly property var viewerShortcuts: ShortcutCatalog.previewKeys
     property bool actionNavigationActive: false
     property string focusedActionId: ""
@@ -297,6 +304,17 @@ Item {
             return row.id !== "correctionsbatch" && (row.id !== "qr" || root.qrDetected)
                 && (row.id !== "compare" || root.canCompare)
         })
+    }
+
+    // Rows of a group together, groups in the order they first appear, so
+    // the menu's section headings each show once.
+    function inGroups(rows) {
+        const order = []
+        for (const row of rows) if (order.indexOf(row.group) < 0) order.push(row.group)
+        return rows.map(function (row, index) { return {row: row, index: index} })
+            .sort(function (a, b) {
+                return (order.indexOf(a.row.group) - order.indexOf(b.row.group)) || a.index - b.index
+            }).map(function (entry) { return entry.row })
     }
 
     // Primary actions in the inspector; the full registry stays in the menu.
@@ -414,6 +432,7 @@ Item {
         resumePending = true
         externalSubtitle = ""
         subtitleChoice = 0
+        subtitleTrack = -1
         audioTrackChoice = 0
         subtitleOffsetMs = 0
         subtitleFiles = Subtitles.files(path)
@@ -663,6 +682,7 @@ Item {
         const choices = subtitleChoices()
         if (subtitleChoice < 0 || subtitleChoice >= choices.length) {
             subtitleChoice = 0
+            subtitleTrack = -1
         }
         const choice = choices[subtitleChoice]
         if (choice.kind === "embedded") {
@@ -681,6 +701,7 @@ Item {
     }
 
     function setSubtitleTrack(index) {
+        root.subtitleTrack = index
         if (player.activeSubtitleTrack === index) return
         player.activeSubtitleTrack = index
         if (presentation) presentation.trackChanged()
@@ -773,7 +794,10 @@ Item {
             return true
         }
         if (actionNavigationActive) {
+            // Back to the button that opens the menu, as a menu closes, so
+            // the next Tab moves on rather than opening it again.
             focusPreview()
+            if (overflowButton.visible) overflowButton.forceActiveFocus(Qt.OtherFocusReason)
             return true
         }
         return leaveTextSelection()
@@ -973,6 +997,7 @@ Item {
                     onClicked: root.showInfo = !root.showInfo
                 }
                 IconButton {
+                    id: overflowButton
                     objectName: "viewerOverflowButton"
                     icon: "more"
                     active: root.actionNavigationActive
@@ -1024,6 +1049,19 @@ Item {
                     PillButton { label: modelData }
                 }
             }
+            TextMetrics {
+                id: pdfSearchHintMetrics
+                font.family: Theme.fontFamily
+                font.pixelSize: 11
+                text: "Find text"
+            }
+            // The page box fits its hint with room either side.
+            TextMetrics {
+                id: pdfPageHintMetrics
+                font.family: Theme.fontFamily
+                font.pixelSize: 11
+                text: "Page #"
+            }
             Row {
                 id: pdfSearchCoreMeasure
                 visible: false
@@ -1042,7 +1080,7 @@ Item {
                     model: ["Previous page", "Next page", "Fit page", "Fit width", "Copy page text"]
                     PillButton { label: modelData }
                 }
-                Rectangle { width: 54; height: 28 }
+                Rectangle { width: root.pdfPageBoxWidth; height: 28 }
             }
             // The page row after the labels have shortened: the arrows and glyphs
             // cost nothing, so this is what has to fit before the page box and
@@ -1055,7 +1093,7 @@ Item {
                     model: ["←", "→", "⛶", "↔", "Copy page text"]
                     PillButton { label: modelData }
                 }
-                Rectangle { width: 54; height: 28 }
+                Rectangle { width: root.pdfPageBoxWidth; height: 28 }
                 PillButton { label: "Page 1 of 2" }
             }
 
@@ -1837,7 +1875,8 @@ Item {
                 visible: root.isDocument && PdfInfo.available && PdfInfo.textSearchAvailable
 
                 Rectangle {
-                    width: root.compactPdfSearch ? 110 : 220
+                    // Narrow, still as wide as its short hint and the padding.
+                    width: root.compactPdfSearch ? Math.max(110, Math.ceil(pdfSearchHintMetrics.advanceWidth) + 16) : 220
                     height: 28
                     radius: Theme.cornerRadius > 0 ? Math.min(4, Theme.cornerRadius) : 3
                     color: root.shade(Theme.foreground, 0.06)
@@ -1862,11 +1901,16 @@ Item {
                         Keys.onEnterPressed: root.findInPdf()
                     }
                     Text {
+                        objectName: "pdfSearchHint"
                         anchors.verticalCenter: parent.verticalCenter
                         anchors.left: parent.left
+                        anchors.right: parent.right
                         anchors.leftMargin: 8
+                        anchors.rightMargin: 8
                         visible: pdfSearch.text === ""
-                        text: "Find in document"
+                        // Short enough for the narrow field, never touching its edge.
+                        text: root.compactPdfSearch ? pdfSearchHintMetrics.text : "Find in document"
+                        elide: Text.ElideRight
                         font.family: Theme.fontFamily
                         font.pixelSize: 11
                         color: Theme.mutedText
@@ -1991,7 +2035,7 @@ Item {
 
                 // Jump straight to a page by number.
                 Rectangle {
-                    width: 54
+                    width: root.pdfPageBoxWidth
                     height: 28
                     visible: !root.narrowPdfPage
                     anchors.verticalCenter: parent.verticalCenter
@@ -2022,9 +2066,10 @@ Item {
                         }
                     }
                     Text {
+                        objectName: "pdfPageHint"
                         anchors.centerIn: parent
                         visible: pdfPageInput.text === ""
-                        text: "Page #"
+                        text: pdfPageHintMetrics.text
                         font.family: Theme.fontFamily
                         font.pixelSize: 11
                         color: Theme.mutedText
@@ -2041,9 +2086,13 @@ Item {
                 anchors.bottom: parent.bottom
                 anchors.right: parent.right
                 anchors.rightMargin: 16
-                anchors.bottomMargin: stacked ? 62 + (resumePrompt.visible ? resumePrompt.height + 10 : 0) : 11
+                // Beside a video's transport it lines up with the bar: the
+                // same bottom and height.
+                readonly property bool besideTransport: root.isVideo && !root.slideshowRunning && !stacked
+                anchors.bottomMargin: stacked ? 62 + (resumePrompt.visible ? resumePrompt.height + 10 : 0)
+                                              : besideTransport ? transport.anchors.bottomMargin : 11
                 width: topControls.implicitWidth + 10
-                height: topControls.implicitHeight + 10
+                height: besideTransport ? transport.height : topControls.implicitHeight + 10
                 radius: Theme.cornerRadius > 0 ? Theme.cornerRadius : 4
                 // Beside a video's transport it is drawn the same way, so the
                 // light theme does not leave a pale, disabled looking pill
@@ -2066,6 +2115,8 @@ Item {
                     PillButton {
                         objectName: "viewerSlideshowButton"
                         osd: topControlsPanel.osd
+                        // The panel draws the outline; one border, not two.
+                        segment: true
                         visible: !root.isVideo || root.slideshowRunning
                         enabled: root.canNavigate
                         label: root.compactControls
@@ -2079,6 +2130,7 @@ Item {
                     PillButton {
                         objectName: "previewFullscreenPill"
                         osd: topControlsPanel.osd
+                        segment: true
                         visible: root.isVideo || root.slideshowRunning
                         label: root.fullScreen ? "↙" : (root.compactControls ? "⛶" : "Fullscreen")
                         toolTip: root.fullScreen ? "Exit fullscreen"
@@ -2158,13 +2210,13 @@ Item {
 
                 PillButton {
                     objectName: "resumeButton"
-                    label: "Resume " + transport.clock(root.resumePosition)
+                    label: "Resume from " + transport.clock(root.resumePosition)
                     active: true
                     onClicked: root.resumeVideo()
                 }
                 PillButton {
                     objectName: "restartVideoButton"
-                    label: "Restart"
+                    label: "Start over"
                     onClicked: root.restartVideo()
                 }
             }
@@ -3023,7 +3075,10 @@ Item {
             anchors.right: parent.right
             anchors.rightMargin: 10
             width: Math.min(280, panel.width - 40)
-            height: Math.min(380, Math.max(140, panel.height - (root.headerShown ? 62 : 20)))
+            // As tall as its rows where the window has room; it scrolls only
+            // when it has to.
+            height: Math.max(140, Math.min(actions.contentHeight + 12,
+                                           panel.height - (root.headerShown ? 62 : 20)))
             radius: Theme.cornerRadius > 0 ? Theme.cornerRadius : 4
             color: root.shade(Theme.background, 0.98)
             border.width: 1
@@ -3045,13 +3100,17 @@ Item {
                 spacing: 1
                 ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
 
-                model: root.visible ? root.visibleActions() : []
+                model: root.visible ? root.inGroups(root.visibleActions()) : []
                 section.property: "group"
                 section.criteria: ViewSection.FullString
                 section.delegate: Text {
                     required property string section
                     width: actions.width
                     height: 24
+                    // In line with the rows' labels.
+                    leftPadding: 10
+                    rightPadding: 10
+                    elide: Text.ElideRight
                     text: section
                     font.family: Theme.fontFamily
                     font.pixelSize: 11

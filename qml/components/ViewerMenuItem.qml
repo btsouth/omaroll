@@ -18,6 +18,8 @@ MenuItem {
     function shade(base, amount) {
         return Qt.rgba(base.r, base.g, base.b, amount)
     }
+    // The theme's red, lifted until it reads on the dark menu.
+    readonly property color danger: Osd.legible(Theme.red, Osd.panelSolid, 4.5)
 
     objectName: separator ? "" : subMenu ? "viewerMenu_group-" + (subMenu.groupId || "")
                                          : "viewerMenu_" + row.id
@@ -48,7 +50,7 @@ MenuItem {
             anchors.verticalCenter: parent.verticalCenter
             width: parent.width
             height: 1
-            color: entry.shade(Theme.foreground, 0.12)
+            color: Osd.divider
         }
         Icon {
             id: tick
@@ -59,7 +61,7 @@ MenuItem {
             anchors.verticalCenter: parent.verticalCenter
             name: "check"
             size: 14
-            color: entry.highlighted ? Theme.brightForeground : Theme.accent
+            color: entry.highlighted ? Osd.brightForeground : Osd.accent
         }
         Text {
             visible: !entry.separator
@@ -74,8 +76,8 @@ MenuItem {
             elide: Text.ElideRight
             font.family: Theme.fontFamily
             font.pixelSize: 12
-            color: entry.row.id === "trash" ? Theme.red
-                   : entry.highlighted ? Theme.brightForeground : Theme.foreground
+            color: entry.row.id === "trash" ? entry.danger
+                   : entry.highlighted ? Osd.brightForeground : Osd.foreground
         }
         Text {
             visible: !entry.separator && entry.needsTool
@@ -89,7 +91,7 @@ MenuItem {
             elide: Text.ElideRight
             font.family: Theme.fontFamily
             font.pixelSize: 11
-            color: Theme.mutedText
+            color: Osd.mutedText
         }
         Text {
             id: shortcutLabel
@@ -100,7 +102,7 @@ MenuItem {
             text: entry.shortcutText
             font.family: Theme.fontFamily
             font.pixelSize: 11
-            color: Theme.mutedText
+            color: Osd.mutedText
         }
         Icon {
             id: submenuArrow
@@ -111,17 +113,17 @@ MenuItem {
             anchors.verticalCenter: parent.verticalCenter
             // Towards the side the submenu opens on: its own side while it
             // is up, and before that the side this menu cascaded to.
-            readonly property bool pointsLeft: !!entry.subMenu
-                                               && (entry.subMenu.visible
-                                                   ? entry.subMenu.cascadedLeft === true
-                                                   : !!entry.menu && entry.menu.cascadedLeft === true)
+            readonly property bool pointsLeft: !!entry.subMenu && !!entry.menu
+                                               && entry.menu.submenuOpensLeft !== undefined
+                                               && (void entry.subMenu.visible, void entry.menu.visible,
+                                                   entry.menu.submenuOpensLeft(entry.subMenu))
             name: pointsLeft ? "chevron-left" : "chevron-right"
             size: 14
-            color: entry.highlighted ? Theme.brightForeground : Theme.mutedText
+            color: entry.highlighted ? Osd.brightForeground : Osd.mutedText
         }
     }
     background: Rectangle {
-        color: entry.highlighted && !entry.separator ? entry.shade(Theme.foreground, 0.09) : "transparent"
+        color: entry.highlighted && !entry.separator ? Osd.hover : "transparent"
         radius: Theme.cornerRadius > 0 ? Math.min(Theme.cornerRadius, 3) : 0
     }
 }

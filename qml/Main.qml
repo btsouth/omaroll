@@ -1387,6 +1387,10 @@ ApplicationWindow {
     }
 
     TextSearchNotice {
+        objectName: "textSearchNoticeBox"
+        // A note about the grid's results: not over the preview or a sheet,
+        // where it covered the preview's zoom bar.
+        visible: wanted && !root.anySheetOpen
         onSettingsRequested: settingsSheet.openSection("search")
         anchors.bottom: library.bottom
         anchors.horizontalCenter: library.horizontalCenter

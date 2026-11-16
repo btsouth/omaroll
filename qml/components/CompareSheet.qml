@@ -220,8 +220,11 @@ Item {
                 anchors.left: parent.left
                 anchors.leftMargin: 100
                 anchors.verticalCenter: parent.verticalCenter
+                // The zoom is relative to fitting each picture in its cell, so
+                // 1 is Fit, as the toolbar says, not the picture at 100%.
                 text: root.imageCount + (root.imageCount === 1 ? " picture" : " pictures")
-                      + "  ·  " + Math.round(root.zoom * 100) + "%"
+                      + "  ·  " + (root.zoom === 1 && root.panX === 0 && root.panY === 0
+                                   ? "Fit" : Math.round(root.zoom * 100) + "% of fit")
                 font.family: Theme.fontFamily
                 font.pixelSize: 11
                 color: Theme.mutedText

@@ -19,9 +19,12 @@ Popup {
     readonly property int preferredColumnWidth: 400
     readonly property int minimumColumnWidth: 340
     readonly property real room: Math.max(0, (parent ? parent.width : 0) - 24)
+    // Sized from the whole list, not the filtered one, so the sheet keeps
+    // its width while a filter narrows it.
+    readonly property int allGroupCount: ShortcutCatalog.groups(context, video, animated, audioChoices, sidecarSubtitles, "").length
     readonly property int columnCount: {
         const fit = Math.floor((room - 2 * padding + columnGap) / (minimumColumnWidth + columnGap))
-        return Math.max(1, Math.min(3, fit, groups.length))
+        return Math.max(1, Math.min(3, fit, allGroupCount))
     }
 
     // Groups into columns: the first group (Navigation) heads the first
@@ -58,14 +61,25 @@ Popup {
     width: Math.min(room, columnCount * preferredColumnWidth + columnGap * (columnCount - 1) + 2 * padding)
     readonly property real naturalHeight: heading.implicitHeight + 12 + search.implicitHeight + 12
                                           + Math.max(columnsRow.implicitHeight, 40) + 2 * padding
-    height: Math.min(naturalHeight, (parent ? parent.height : 0) - 24)
+    // Centred on its whole list; while a filter shortens the list the top
+    // stays there, so the title and the field do not move with every key.
+    // The sheet still shrinks to what it lists.
+    property real unfilteredHeight: 0
+    onNaturalHeightChanged: if (root.filter === "") root.unfilteredHeight = root.naturalHeight
+    readonly property real top: Math.round(((parent ? parent.height : 0)
+                                            - Math.min(Math.max(naturalHeight, unfilteredHeight),
+                                                       (parent ? parent.height : 0) - 24)) / 2)
+    height: Math.min(naturalHeight, (parent ? parent.height : 0) - 12 - top)
     x: Math.round(((parent ? parent.width : 0) - width) / 2)
-    y: Math.round(((parent ? parent.height : 0) - height) / 2)
+    y: top
     modal: true
     focus: true
-    onOpened: {
+    onAboutToShow: {
         search.text = "";
         root.filter = "";
+        root.unfilteredHeight = root.naturalHeight;
+    }
+    onOpened: {
         scroll.contentItem.contentY = 0;
         contentItem.forceActiveFocus();
     }
