@@ -245,7 +245,9 @@ private slots:
       DecodeJournal::simulateCrash();
       DecodeJournal::close();
     }
-    QVERIFY(DecodeJournal::open(journal));
+    // A helper the app forks shares the journal's open file, and with it the
+    // lock, until it execs. Reopening the moment after closing can meet that.
+    QTRY_VERIFY(DecodeJournal::open(journal));
     const auto closeJournal = qScopeGuard([this] {
       DecodeJournal::close();
       if (!m_window->isVisible()) m_window->show();
