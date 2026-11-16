@@ -2,14 +2,21 @@
 
 ## Latest release
 
-[Omaroll 1.19.1](https://github.com/btsouth/omaroll/releases/tag/v1.19.1), dated
-15 November 2026. See the [changelog](../CHANGELOG.md#1191) for what it includes.
+[Omaroll 1.20.0](https://github.com/btsouth/omaroll/releases/tag/v1.20.0), dated
+16 November 2026. See the [changelog](../CHANGELOG.md#1200) for what it includes.
 
 The release provides x86_64 and aarch64 Arch packages, a source archive and
 PKGBUILD, with checksums and signed build provenance. Installation and
 verification commands are in the [README](../README.md#install-or-update).
 
 ## Current work
+
+Version 1.20.0 puts albums, tags and dates in the sidebar, adds Jump to date
+and a date scrubber, and lets tags and albums be edited from the preview, the
+viewer and Organize, with undo. It was checked on a real Omarchy desktop with
+AMD graphics, and every menu, popup and sheet was opened in an isolated
+desktop in dark and light themes. Not checked: dragging a file out to another
+app, speaker output, a second monitor and other display scales.
 
 Version 1.19.1 fixes menus, tooltips, the PDF preview's find controls and
 video details. The fixes came from the 1.19.0 check on a real Omarchy desktop

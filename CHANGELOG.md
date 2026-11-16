@@ -1,6 +1,10 @@
 # Changelog
 
-## Unreleased
+## 1.20.0
+
+Albums, tags and dates in the sidebar, tags and albums edited where you look
+at a file, Jump to date, and fixes from a full check on a real desktop.
+[Install or update](https://github.com/btsouth/omaroll#install-or-update).
 
 ### Added
 
