@@ -11092,15 +11092,23 @@ private slots:
     QQuickItem* pane = item("sidebarCollectionsPane");
     QQuickItem* list = item("sidebarCollections");
     QTRY_VERIFY(collectionIndex("tag", "Focusz/Inner") > 0);
-    QTest::qWait(250);
     QMetaObject::invokeMethod(pane, "moveTo", Q_ARG(QVariant, 0));
     QTRY_COMPARE(list->property("currentIndex").toInt(), 0);
+    // createTag starts organizationChanges while setSidebarSections populates
+    // Focusz/Inner synchronously, so focusRow runs before that timer fires
+    // (keep this without a prior wait). The pending reveal must still drop
+    // when the timer fires even though the rows themselves did not change.
     QMetaObject::invokeMethod(pane, "focusRow", Q_ARG(QVariant, QStringLiteral("tag")),
                               Q_ARG(QVariant, QStringLiteral("Nowhere/At all")));
-    // Dropped at once, or by the organization rebuild already on its way
-    // when tags were still settling, which a slow build can meet.
     QTRY_VERIFY(!pane->property("revealPending").toBool());
     QCOMPARE(list->property("currentIndex").toInt(), 0);
+    QCOMPARE(pane->property("currentKey").toString(), QStringLiteral("header:tags"));
+    // Once settled, a second missing-row request also drops cleanly.
+    QMetaObject::invokeMethod(pane, "focusRow", Q_ARG(QVariant, QStringLiteral("tag")),
+                              Q_ARG(QVariant, QStringLiteral("Nowhere/At all")));
+    QTRY_VERIFY(!pane->property("revealPending").toBool());
+    QCOMPARE(list->property("currentIndex").toInt(), 0);
+    QCOMPARE(pane->property("currentKey").toString(), QStringLiteral("header:tags"));
     // An unrelated rebuild leaves the current row alone.
     const int year = collectionIndex("header", "dates") + 1;
     QMetaObject::invokeMethod(pane, "setYearOpen", Q_ARG(QVariant, collectionRows().at(year).toMap().value("name")),

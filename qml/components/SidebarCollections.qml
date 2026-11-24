@@ -193,9 +193,29 @@ FocusScope {
         }
         return -1
     }
+    function settlePendingReveal() {
+        if (!root.revealPending) return
+        const index = root.indexOfKey(root.currentKey)
+        if (index >= 0) {
+            list.currentIndex = index
+            root.revealPending = false
+            list.forceLayout()
+            root.reveal(index)
+            root.currentKey = root.keyOf(root.rows[list.currentIndex])
+        } else if (!organizationChanges.running) {
+            // The row asked for is not among these rows, and no rebuild that
+            // could bring it is on its way: drop the request, so a later,
+            // unrelated rebuild does not jump there.
+            root.revealPending = false
+            root.currentKey = root.keyOf(root.rows[list.currentIndex])
+        }
+    }
     function applyRows() {
         const signature = JSON.stringify(root.rows)
-        if (signature === root.appliedRows) return
+        if (signature === root.appliedRows) {
+            root.settlePendingReveal()
+            return
+        }
         root.appliedRows = signature
         const key = root.currentKey
         const before = list.currentIndex
@@ -218,15 +238,7 @@ FocusScope {
             list.contentY = Math.max(list.originY, Math.min(end, list.contentY + topOffset))
         }
         root.restoring = false
-        if (root.revealPending && index >= 0) {
-            root.revealPending = false
-            list.forceLayout()
-            root.reveal(index)
-        }
-        // The row asked for is not among these rows, and no rebuild that
-        // could bring it is on its way: drop the request, so a later,
-        // unrelated rebuild does not jump there.
-        if (root.revealPending && index < 0 && !organizationChanges.running) root.revealPending = false
+        root.settlePendingReveal()
         if (!root.revealPending) root.currentKey = root.keyOf(root.rows[list.currentIndex])
         root.modelResets++
     }
@@ -431,17 +443,7 @@ FocusScope {
         // Under a collapsed section, open it once to reach the row.
         const section = kind === "album" ? "albums" : kind === "tag" ? "tags" : "dates"
         if (root.indexOfKey(root.currentKey) < 0 && !root.isOpen(section)) root.setOpen(section, true)
-        const index = root.indexOfKey(root.currentKey)
-        if (index >= 0) {
-            list.currentIndex = index
-            root.revealPending = false
-            list.forceLayout()
-            root.reveal(index)
-        } else if (!organizationChanges.running) {
-            // Not there, and no rebuild is coming to bring it.
-            root.revealPending = false
-            root.currentKey = root.keyOf(root.rows[list.currentIndex])
-        }
+        root.settlePendingReveal()
         list.forceActiveFocus()
     }
     property bool revealPending: false
